@@ -21,10 +21,11 @@ EA สำหรับ MetaTrader 5 ตามระบบ "สมการเฮ�
 ## สถานะโปรเจกต์
 
 - [x] เอกสารออกแบบละเอียด + traceability กับไฟล์ Role & Prompt (DESIGN.md §0)
-- [x] Core logic ครบวงจร (เฟส 1–4): Trend MTF, Cover Loss 2 โมเดล, Risk guards 9 ข้อ,
-      Zero Hedge lock/unlock, S/R break, counter-trend, Equity TP, StateStore กู้สถานะข้าม restart
-- [x] Unit tests สูตรสมการ: `MQL5/Scripts/HedgeEqEA_Tests.mq5` (รันใน MT5 ต้องได้ ALL PASSED)
-- [ ] เฟส 5–6: Panel UI, NewsFilter/rollover, CSV log, push alerts, optimization + set files
+- [x] เฟส 1–4: Trend MTF, Cover Loss 2 โมเดล, Risk guards 9 ข้อ, Zero Hedge lock/unlock,
+      S/R break, counter-trend, Equity TP (baseline รายรอบ), StateStore กู้สถานะข้าม restart
+- [x] เฟส 5: Panel (LOCK/CLOSE ALL/PAUSE), NewsFilter+rollover+Friday guard, CSV log, push alerts
+- [x] เฟส 6 (เครื่องมือ): `OnTester` custom criterion, presets `MQL5/Presets/`, คู่มือ [`Docs/TESTING.md`](Docs/TESTING.md)
+- [x] ตรวจบัค 1 รอบ (แก้ 11 จุด) + วิเคราะห์ความเสี่ยงพอร์ตแตก: [`Docs/RISK.md`](Docs/RISK.md)
+- [ ] งานฝั่งผู้ใช้: compile + unit tests + backtest + optimize + demo — **ทำตาม `Docs/TESTING.md` ทีละขั้น**
 
-**ขั้นตอนแรกสำหรับผู้ใช้:** เปิดโปรเจกต์ใน MetaEditor → compile (F7) → รัน `HedgeEqEA_Tests`
-→ backtest บน XAUUSD/GBPUSD M5 โหมด real ticks ก่อนใช้ demo
+**เริ่มที่นี่:** `Docs/TESTING.md` ขั้น 0 — MetaEditor F7 แล้วรัน `HedgeEqEA_Tests` (ต้อง ALL PASSED)

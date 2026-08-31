@@ -25,6 +25,25 @@ enum ENUM_SIDEWAY_MODE
    SIDEWAY_MIN_LOT  // เปิดได้เฉพาะ VOLUME_MIN และปิด pyramid
   };
 
+// ชนิดของออเดอร์ที่ขอเปิด — RiskManager ใช้เลือกชุดการ์ด (DESIGN §7)
+// ออเดอร์ "ป้องกัน" (COVER/ZEROHEDGE) ไม่ถูกบล็อกด้วย news/rollover/friday
+enum ENUM_OPEN_KIND
+  {
+   OPEN_ENTRY,      // ไม้แรกของรอบ
+   OPEN_PYRAMID,    // เติมไม้ตามเทรนด์
+   OPEN_COUNTER,    // ไม้สวนเทรนด์ (prompt §4C)
+   OPEN_COVER,      // ไม้แก้พอร์ต Cover Loss — ป้องกัน
+   OPEN_ZEROHEDGE   // ล็อคพอร์ต — ต้องทำได้ทุกสถานการณ์
+  };
+
+// พฤติกรรมเย็นวันศุกร์ (ปิดความเสี่ยง gap สุดสัปดาห์ — RISK S2)
+enum ENUM_FRIDAY_MODE
+  {
+   FRIDAY_TRADE,      // เทรดปกติ
+   FRIDAY_BLOCK_NEW,  // งดเปิดไม้เพิ่มความเสี่ยงหลัง cutoff (default)
+   FRIDAY_LOCK        // Zero Hedge ล็อคพอร์ตก่อนปิดตลาด แล้วคลายจันทร์ตามเงื่อนไขปกติ
+  };
+
 //--- pure lot utilities (unit-testable — Scripts/HedgeEqEA_Tests.mq5)
 // ปัด "ขึ้น" ตาม step แล้ว clamp [vmin, vmax] — ใช้กับ lot แก้ไม้ (สูตร cover ต้องไม่ขาด)
 double NormalizeLotUpPure(double lot, double step, double vmin, double vmax)
@@ -97,7 +116,7 @@ struct SConfig
    int               newsBlockMin;
    bool              lockOnNews;
    string            rolloverStart, rolloverEnd;
-   bool              tradeFriday;
+   ENUM_FRIDAY_MODE  fridayMode;
    string            fridayCutoff;
    // Misc
    bool              showPanel, writeCsv, pushAlerts;

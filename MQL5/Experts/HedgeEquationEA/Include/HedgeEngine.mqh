@@ -11,6 +11,8 @@
 #include "RiskManager.mqh"
 #include "TradeManager.mqh"
 #include "Levels.mqh"
+#include "NewsFilter.mqh"
+#include "Logger.mqh"
 
 enum ENUM_HE_STATE { HE_FLAT, HE_RIDE, HE_COVER, HE_LOCKED, HE_CLOSING };
 
@@ -34,6 +36,8 @@ private:
    CTrendEngine     *m_trend;
    CRiskManager     *m_risk;
    CTradeManager    *m_tm;
+   CNewsFilter      *m_news;
+   CLogger          *m_log;
 
    ENUM_HE_STATE     m_state;
    ENUM_TREND        m_rideDir;        // ทิศของ net lot ที่ควรเป็น (ฝั่งเทรนด์)
@@ -44,6 +48,8 @@ private:
    bool              m_hadCover;       // รอบนี้เคย cover/lock แล้ว (recovery mode)
    int               m_bbHandle;       // Bollinger Band บน Entry TF (counter-trend §6.3)
    bool              m_dirty;          // มีการเปลี่ยน state/layer → main บันทึก StateStore
+   bool              m_paused;         // ปุ่ม PAUSE บน panel: งดเปิดรอบใหม่
+   int               m_lockedCount;    // จำนวนครั้งเข้า LOCKED (สถิติสำหรับ OnTester)
    // cache swing S/R — คำนวณใหม่เฉพาะเมื่อแท่ง Middle TF ใหม่ (ประหยัด CPU ใน real-tick test)
    datetime          m_srBarTime;
    double            m_srSwingLow, m_srSwingHigh;
@@ -51,10 +57,16 @@ private:
    void              SetState(ENUM_HE_STATE s, string reason)
      {
       if(s == m_state) return;
-      PrintFormat("[HedgeEqEA] state %s → %s (%s)",
-                  EnumToString(m_state), EnumToString(s), reason);
+      string tr = EnumToString(m_state) + "→" + EnumToString(s);
       m_state = s;
       m_dirty = true;
+      m_log.Event("state", tr, m_layer, 0, 0, reason);
+      if(s == HE_LOCKED)
+        {
+         m_lockedCount++;
+         m_log.Push(StringFormat("LOCKED (layer %d): %s | DD %.1f%%",
+                                 m_layer, reason, m_view.DrawdownPct()));
+        }
      }
 
    ENUM_ORDER_TYPE   DirToOrder(ENUM_TREND dir) const
@@ -64,13 +76,18 @@ private:
 
 public:
    bool              Init(const SConfig &cfg, CAccountView &view, CTrendEngine &trend,
-                          CRiskManager &risk, CTradeManager &tm)
+                          CRiskManager &risk, CTradeManager &tm, CNewsFilter &news,
+                          CLogger &log)
      {
       m_cfg = cfg;
       m_view = GetPointer(view);
       m_trend = GetPointer(trend);
       m_risk = GetPointer(risk);
       m_tm = GetPointer(tm);
+      m_news = GetPointer(news);
+      m_log = GetPointer(log);
+      m_paused = false;
+      m_lockedCount = 0;
       m_state = HE_FLAT;
       m_rideDir = TREND_SIDEWAY;
       m_layer = 0;
@@ -104,6 +121,8 @@ public:
    bool              InRecovery(void) const        { return m_hadCover; }
    void              SetCycleInfo(double startBal, bool hadCover)   // ใช้ตอน restore
      { m_cycleStartBal = startBal; m_hadCover = hadCover; }
+   int               LockedCount(void) const { return m_lockedCount; }
+   void              SetPaused(bool p)       { m_paused = p; }
 
    //--- สูตร Lot Size Hedge (Cover Loss) — DESIGN §2.3, Role & Prompt §4B (2 โมเดล)
    double            CoverLossLot(void) const
@@ -142,6 +161,7 @@ public:
 
    void              UpdateFlat(void)
      {
+      if(m_paused) return;              // ปุ่ม PAUSE: งดเปิดรอบใหม่ (รอบค้างยังถูกบริหารปกติ)
       ENUM_TREND dir;
       bool isSideway;
       if(!m_trend.EntrySignal(dir, isSideway)) return;
@@ -153,7 +173,7 @@ public:
          lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);   // SIDEWAY_MIN_LOT
         }
       ENUM_ORDER_TYPE t = DirToOrder(dir);
-      SRiskVerdict v = m_risk.CheckOpen(t, lot, false);
+      SRiskVerdict v = m_risk.CheckOpen(t, lot, OPEN_ENTRY);
       if(!v.allowed) return;
       ulong deal;
       if(m_tm.OpenMarket(t, v.adjustedLot, "entry", deal))
@@ -171,6 +191,11 @@ public:
 
    void              UpdateRide(void)
      {
+      // 0) ล็อคเชิงป้องกันตามเวลา (ปิดความเสี่ยง RISK S2) — ไม่นับ layer
+      //    (layer สงวนไว้นับการล็อคจากวิกฤตจริงตามนิยามหนังสือ §2.6)
+      if(m_news.FridayWantsLock()) { EnterLocked("weekend lock (Friday cutoff)", false); return; }
+      if(m_news.NewsWantsLock())   { EnterLocked("news lock (high impact)", false);      return; }
+
       // 1) เทรนด์ยืนยันกลับทิศ → Cover Loss flow (DESIGN §6.1)
       ENUM_TREND newDir;
       if(m_trend.FlipConfirmed(m_rideDir, newDir))
@@ -195,7 +220,7 @@ public:
          double lot = CoverLossLot();
          if(lot <= 0.0) return;
          ENUM_ORDER_TYPE t = DirToOrder(newDir);
-         SRiskVerdict v = m_risk.CheckOpen(t, lot, false);
+         SRiskVerdict v = m_risk.CheckOpen(t, lot, OPEN_COVER);
          if(!v.allowed)
            {
             // แก้ไม้ไม่ได้ตามสูตร → ล็อคพอร์ตแทน (เทคนิค 6)
@@ -237,7 +262,7 @@ public:
          if(stepReached)
            {
             ENUM_ORDER_TYPE t = DirToOrder(m_rideDir);
-            SRiskVerdict v = m_risk.CheckOpen(t, m_cfg.baseLot, false);
+            SRiskVerdict v = m_risk.CheckOpen(t, m_cfg.baseLot, OPEN_PYRAMID);
             ulong deal;
             if(v.allowed && m_tm.OpenMarket(t, v.adjustedLot, "pyramid", deal))
                m_lastEntryPrice = price;
@@ -310,14 +335,15 @@ public:
                      : (SymbolInfoDouble(_Symbol, SYMBOL_ASK) <= lower[0]);  // ขาลงชนขอบล่าง → BUY สวน
       if(!trigger) return;
       ENUM_ORDER_TYPE t = (counterSide == POSITION_TYPE_SELL) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-      SRiskVerdict v = m_risk.CheckOpen(t, m_cfg.baseLot, false, true);   // rule 9 บังคับที่นี่
+      SRiskVerdict v = m_risk.CheckOpen(t, m_cfg.baseLot, OPEN_COUNTER);   // rule 9 บังคับที่นี่
       if(!v.allowed) return;
       ulong deal;
       m_tm.OpenMarket(t, v.adjustedLot, "counter", deal);
      }
 
    //--- Zero Hedge Margin: เปิดไม้ตรงข้าม |net| ให้ net=0 (เทคนิค 6, DESIGN §9)
-   void              EnterLocked(string reason)
+   //    countLayer=false สำหรับล็อคเชิงป้องกันตามเวลา (weekend/news) — ไม่ใช่วิกฤตจริง
+   void              EnterLocked(string reason, bool countLayer = true)
      {
       double net = m_view.NetLot();
       double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
@@ -327,18 +353,24 @@ public:
          ulong deal;
          if(!m_tm.OpenMarket(t, MathAbs(net), "zerohedge", deal))
            {
-            PrintFormat("[HedgeEqEA] วิกฤต: เปิด zero hedge ไม่สำเร็จ (%s) — จะลองใหม่ tick ถัดไป", reason);
+            m_log.Event("zerohedge-fail", EnumToString(m_state), m_layer, MathAbs(net), 0, reason);
+            m_log.Push("วิกฤต: เปิด zero hedge ไม่สำเร็จ — retry tick ถัดไป (" + reason + ")");
             return;
            }
         }
-      m_layer++;                       // นับ layer เมื่อเกิด Zero Hedge (DESIGN §2.6)
-      m_risk.SetLayer(m_layer);
+      if(countLayer)
+        {
+         m_layer++;                    // นับ layer เมื่อเกิด Zero Hedge จากวิกฤต (DESIGN §2.6)
+         m_risk.SetLayer(m_layer);
+        }
       SetState(HE_LOCKED, reason + StringFormat(" → layer %d", m_layer));
      }
 
    //--- UNLOCK (เทคนิค 8 + 3): ทยอยปิดไม้ฝั่งสวนเทรนด์ใหม่ที่ขาดทุนน้อยสุด ทีละไม้/tick
    void              TryUnlock(void)
      {
+      // ห้ามคลายระหว่างเหตุที่ทำให้ล็อคยังอยู่ (กัน lock/unlock วนใน tick เดียวกัน)
+      if(m_news.FridayWantsLock() || m_news.NewsWantsLock()) return;
       // ใช้ AlignedTrend (ไม่ต้อง "สด") — พอร์ตที่ล็อคระหว่างเทรนด์ยาวต้องคลายได้
       // แม้การจัดเรียง MA เกิดมานานแล้ว (เงื่อนไข fresh ใช้เฉพาะการเข้ารอบใหม่)
       ENUM_TREND dir;

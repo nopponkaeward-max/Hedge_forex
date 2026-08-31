@@ -15,9 +15,12 @@
 #include "Include/TrendEngine.mqh"
 #include "Include/TradeManager.mqh"
 #include "Include/RiskManager.mqh"
+#include "Include/NewsFilter.mqh"
+#include "Include/Logger.mqh"
 #include "Include/HedgeEngine.mqh"
 #include "Include/EquityTP.mqh"
 #include "Include/StateStore.mqh"
+#include "Include/Panel.mqh"
 
 //=== General =================================================
 input long   InpMagic            = 990001;   // Magic Number (ต่างกันทุก chart)
@@ -83,7 +86,7 @@ input int    InpNewsBlockMin     = 30;
 input bool   InpLockOnNews       = false;
 input string InpRolloverStart    = "23:55";
 input string InpRolloverEnd      = "00:20";
-input bool   InpTradeFriday      = true;
+input ENUM_FRIDAY_MODE InpFridayMode = FRIDAY_BLOCK_NEW; // ศุกร์: TRADE / BLOCK_NEW / LOCK (กัน gap สุดสัปดาห์)
 input string InpFridayCutoff     = "18:00";
 
 //=== Misc ===================================================
@@ -102,6 +105,10 @@ CRiskManager   g_risk;
 CHedgeEngine   g_engine;
 CEquityTP      g_etp;
 CStateStore    g_store;
+CNewsFilter    g_news;
+CLogger        g_log;
+CPanel         g_panel;
+double         g_minML = DBL_MAX;   // ML% ต่ำสุดที่แตะ (สถิติ OnTester)
 
 // บันทึกตัวแปรที่กู้จาก positions ไม่ได้ (DESIGN §13)
 void PersistState(void)
@@ -146,7 +153,7 @@ void FillConfig(void)
    g_cfg.useNewsFilter = InpUseNewsFilter;     g_cfg.newsBlockMin = InpNewsBlockMin;
    g_cfg.lockOnNews = InpLockOnNews;
    g_cfg.rolloverStart = InpRolloverStart;     g_cfg.rolloverEnd = InpRolloverEnd;
-   g_cfg.tradeFriday = InpTradeFriday;         g_cfg.fridayCutoff = InpFridayCutoff;
+   g_cfg.fridayMode = InpFridayMode;           g_cfg.fridayCutoff = InpFridayCutoff;
    g_cfg.showPanel = InpShowPanel;             g_cfg.writeCsv = InpWriteCsv;
    g_cfg.pushAlerts = InpPushAlerts;
    g_cfg.retryCount = InpRetryCount;           g_cfg.retryDelayMs = InpRetryDelayMs;
@@ -165,9 +172,12 @@ int OnInit(void)
    if(!g_view.Init(g_cfg))            return INIT_FAILED;
    if(!g_trend.Init(g_cfg))           { Alert("[HedgeEqEA] สร้าง MA handles ไม่สำเร็จ"); return INIT_FAILED; }
    if(!g_tm.Init(g_cfg))              return INIT_FAILED;
-   if(!g_risk.Init(g_cfg, g_view))    return INIT_FAILED;
-   if(!g_engine.Init(g_cfg, g_view, g_trend, g_risk, g_tm)) return INIT_FAILED;
+   if(!g_news.Init(g_cfg))            return INIT_FAILED;
+   if(!g_log.Init(g_cfg, g_view, g_trend)) return INIT_FAILED;
+   if(!g_risk.Init(g_cfg, g_view, g_news)) return INIT_FAILED;
+   if(!g_engine.Init(g_cfg, g_view, g_trend, g_risk, g_tm, g_news, g_log)) return INIT_FAILED;
    if(!g_etp.Init(g_cfg, g_view))     return INIT_FAILED;
+   if(!g_panel.Init(g_cfg, g_view, g_trend, g_engine)) return INIT_FAILED;
 
    // กู้ตัวแปรจากไฟล์ state ก่อน แล้วจึง reconstruct จาก positions จริง (positions เป็นหลัก)
    g_store.Init(g_cfg);
@@ -197,20 +207,27 @@ void OnDeinit(const int reason)
    EventKillTimer();
    g_trend.Deinit();
    g_engine.Deinit();
+   g_panel.Deinit();
    // ไม่ปิดออเดอร์ — รอบเทรดต้องอยู่ข้าม restart ได้ (DESIGN §13)
   }
 
 //+------------------------------------------------------------------+
 void OnTick(void)
   {
+   // สถิติ ML% ต่ำสุด (OnTester criterion)
+   double ml = g_view.MarginLevelEA();
+   if(ml != DBL_MAX && ml < g_minML) g_minML = ml;
+
    // Equity TP เช็คก่อนทุกอย่าง ทุก state (DESIGN §4 กรอบบน) — baseline รายรอบ
    string reason;
    if(g_etp.ShouldCloseAll(g_engine.CycleStartBalance(), g_engine.InRecovery(), reason))
      {
-      Print("[HedgeEqEA] " + reason);
+      g_log.Event("equity-tp", "CLOSE_ALL", g_engine.Layer(), 0, 0, reason);
+      g_log.Push(reason);
       g_engine.UserCloseAll();
       return;
      }
+   g_engine.SetPaused(g_panel.Paused());
    g_engine.OnTickUpdate();
    if(g_engine.ConsumeDirty()) PersistState();   // state/layer เปลี่ยน → บันทึกทันที
   }
@@ -235,7 +252,28 @@ void OnTimer(void)
       lastHeartbeat = TimeCurrent();
       if(g_view.OpenPositions() > 0) LogSnapshot("heartbeat");
      }
-   // TODO(phase-5): อัปเดต panel, ตรวจ news window
+   g_panel.Update();
+  }
+
+//+------------------------------------------------------------------+
+//| Custom optimization criterion (เฟส 6 — DESIGN §15.3):            |
+//| Profit/MaxDD พร้อม penalty เมื่อระบบ "เฉียดตาย" แม้กำไรจะสวย      |
+//+------------------------------------------------------------------+
+double OnTester(void)
+  {
+   double profit = TesterStatistics(STAT_PROFIT);
+   double maxddP = TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
+   double score  = (maxddP > 0.1) ? profit / maxddP : profit;
+   // penalty: ทุกครั้งที่เข้า LOCKED = ระบบเข้าโหมดวิกฤต — ชุดพารามิเตอร์ที่ล็อคบ่อยไม่ควรชนะ
+   int locked = g_engine.LockedCount();
+   if(locked > 0) score /= (1.0 + locked);
+   // penalty: ML% ต่ำสุดเคยหลุดใต้เส้นล็อค = เฉียด margin call
+   if(g_minML < g_cfg.mlLockPct) score *= 0.5;
+   // ชุดที่ขาดทุนสุทธิ: ให้คะแนนติดลบตามจริง ไม่หาร DD (กัน DD เล็กดันคะแนน)
+   if(profit < 0) score = profit;
+   PrintFormat("[HedgeEqEA] OnTester: profit=%.2f maxDD=%.1f%% locked=%d minML=%.0f score=%.4f",
+               profit, maxddP, locked, g_minML, score);
+   return score;
   }
 
 //+------------------------------------------------------------------+
@@ -263,6 +301,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
   {
-   // TODO(phase-5): ปุ่ม panel — [LOCK NOW] → g_engine.UserLock(),
-   //                [CLOSE ALL] (ยืนยัน 2 คลิกใน 3 วิ) → g_engine.UserCloseAll()
+   if(id == CHARTEVENT_OBJECT_CLICK)
+      g_panel.OnClick(sparam);   // LOCK NOW / CLOSE ALL (ยืนยัน 2 คลิก) / PAUSE
   }

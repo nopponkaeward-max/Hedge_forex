@@ -6,6 +6,7 @@
 
 #include "Config.mqh"
 #include "AccountView.mqh"
+#include "NewsFilter.mqh"
 
 struct SRiskVerdict
   {
@@ -20,13 +21,15 @@ class CRiskManager
 private:
    SConfig           m_cfg;
    CAccountView     *m_view;
+   CNewsFilter      *m_news;
    int               m_layer;       // ตัวนับ layer ปัจจุบัน — HedgeEngine เป็นผู้ increment
 
 public:
-   bool              Init(const SConfig &cfg, CAccountView &view)
+   bool              Init(const SConfig &cfg, CAccountView &view, CNewsFilter &news)
      {
       m_cfg = cfg;
       m_view = GetPointer(view);
+      m_news = GetPointer(news);
       m_layer = 0;
       return true;
      }
@@ -46,17 +49,16 @@ public:
       return budget / marginPerLot;
      }
 
-   SRiskVerdict      CheckOpen(ENUM_ORDER_TYPE type, double lot, bool isZeroHedgeEntry,
-                               bool isCounterTrend = false)
+   SRiskVerdict      CheckOpen(ENUM_ORDER_TYPE type, double lot, ENUM_OPEN_KIND kind)
      {
       SRiskVerdict v;
       v.allowed = true; v.adjustedLot = lot; v.ruleHit = 0; v.reason = "";
 
       // ข้อยกเว้นสำคัญ: การเข้า Zero Hedge (LOCKED) ต้องทำได้ทุกสถานการณ์ (DESIGN §7)
-      if(isZeroHedgeEntry) return v;
+      if(kind == OPEN_ZEROHEDGE) return v;
 
       // 9. กติกาเหล็กของ prompt §4C: Σlot สวนเทรนด์ (รวมไม้ใหม่) ≤ Σlot ฝั่งตามเทรนด์
-      if(isCounterTrend)
+      if(kind == OPEN_COUNTER)
         {
          double buy, sell;
          m_view.SumLots(buy, sell);
@@ -72,7 +74,17 @@ public:
       if(spread > m_cfg.maxSpreadPts)
         { v.allowed = false; v.ruleHit = 1; v.reason = StringFormat("spread %d > %d", spread, m_cfg.maxSpreadPts); return v; }
 
-      // 2-3. rollover / news — TODO(phase-4): เรียก NewsFilter/SessionFilter
+      // 2-3. rollover / news / friday — เฉพาะไม้ "เพิ่มความเสี่ยง" (entry/pyramid/counter)
+      //      ไม้ COVER เป็นกลไกป้องกัน ต้องเปิดได้แม้ช่วงข่าว (DESIGN §6 หมายเหตุ)
+      if(kind != OPEN_COVER)
+        {
+         if(m_news.InRollover())
+           { v.allowed = false; v.ruleHit = 2; v.reason = "ช่วง rollover"; return v; }
+         if(m_news.InNewsWindow())
+           { v.allowed = false; v.ruleHit = 3; v.reason = "หน้าต่างข่าว impact สูง"; return v; }
+         if(m_news.FridayBlocksNew())
+           { v.allowed = false; v.ruleHit = 3; v.reason = "ศุกร์หลัง cutoff"; return v; }
+        }
 
       // 4. layer cap (เกณฑ์หนังสือ 1–2 ชั้น)
       if(m_layer >= m_cfg.maxLayers)

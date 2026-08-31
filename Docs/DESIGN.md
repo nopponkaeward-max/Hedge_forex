@@ -449,8 +449,8 @@ input int    InpNewsBlockMin     = 30;       // งดเปิดไม้ ก�
 input bool   InpLockOnNews       = false;    // ทำ Zero Hedge อัตโนมัติคร่อมข่าวแรง (เทคนิค 6)
 input string InpRolloverStart    = "23:55";  // เวลา server — งดเปิดไม้ช่วง rollover
 input string InpRolloverEnd      = "00:20";
-input bool   InpTradeFriday      = true;
-input string InpFridayCutoff     = "18:00";  // งดเปิดรอบใหม่หลังเวลานี้วันศุกร์
+input ENUM_FRIDAY_MODE InpFridayMode = FRIDAY_BLOCK_NEW; // TRADE / BLOCK_NEW / LOCK (Zero Hedge ก่อนปิดตลาด — กัน gap)
+input string InpFridayCutoff     = "18:00";  // เวลา cutoff วันศุกร์ (เวลา server)
 
 //=== อื่น ๆ ==================================================
 input bool   InpShowPanel        = true;
@@ -624,11 +624,11 @@ public:
 | 1 | Config, AccountView, TradeManager, Logger | ✅ (Logger แบบ Print/heartbeat — CSV รอเฟส 5) | เปิด/ปิดไม้ผ่าน EA + ML%/DD คำนวณถูก (เทียบมือ) |
 | 2 | TrendEngine + state FLAT/RIDE | ✅ (fresh-bar check, new-bar gating, sideway mode) | backtest เปิดไม้ตามเทรนด์ + pyramid ทำงาน |
 | 3 | Cover Loss + EquityTP + RiskManager ครบ | ✅ (2 โมเดล, rule 1–9 ครบ, ML simulate) — ต้องรัน `Scripts/HedgeEqEA_Tests.mq5` ยืนยันใน MT5 | ผ่าน unit tests §15.1 ทั้งหมด + รอบเทรดจบเองใน tester |
-| 4 | LOCKED/UNLOCK + layer + StateStore + S/R break + counter-trend | ✅ (NewsFilter/rollover ยังเป็น TODO) | ทดสอบ restart กลางรอบผ่าน |
-| 5 | Panel + push alerts + CSV + NewsFilter | ⬜ | ใช้งาน demo ได้จริง |
-| 6 | Optimization + walk-forward + set files ต่อ symbol | ⬜ | ค่าพร้อมใช้ XAUUSD / GBPUSD |
+| 4 | LOCKED/UNLOCK + layer + StateStore + S/R break + counter-trend | ✅ | ทดสอบ restart กลางรอบผ่าน |
+| 5 | Panel + push alerts + CSV + NewsFilter/rollover/Friday guard | ✅ | ใช้งาน demo ได้จริง |
+| 6 | Optimization + walk-forward + set files ต่อ symbol | 🔶 เครื่องมือพร้อม (`OnTester` custom criterion, presets XAUUSD/GBPUSD, คู่มือ `Docs/TESTING.md`) — **การรันจริงต้องทำใน MT5 ของผู้ใช้** | ค่าพร้อมใช้ XAUUSD / GBPUSD |
 
-> หมายเหตุ: โค้ดยังไม่ได้ผ่านการ compile บน MetaEditor (สภาพแวดล้อมนี้ไม่มี MT5) — ขั้นแรกของผู้ใช้: เปิดใน MetaEditor กด F7 แล้วรัน `Scripts/HedgeEqEA_Tests.mq5` ต้องได้ ALL PASSED
+> หมายเหตุ: โค้ดยังไม่ได้ผ่านการ compile บน MetaEditor (สภาพแวดล้อมนี้ไม่มี MT5) — ขั้นแรกของผู้ใช้: ทำตาม `Docs/TESTING.md` ขั้น 0 (F7 + `HedgeEqEA_Tests` ต้อง ALL PASSED)
 
 โครง skeleton code ตามสถาปัตยกรรมนี้อยู่ที่ `MQL5/Experts/HedgeEquationEA/` ใน repo แล้ว (คลาสหลัก + สูตร §2 implement จริง, ส่วน logic เต็มมี `// TODO(phase-N)` กำกับตาม roadmap)
 
