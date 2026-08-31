@@ -611,23 +611,27 @@ public:
 
 ## 17. Roadmap การพัฒนา
 
-| เฟส | ขอบเขต | Definition of Done |
-|-----|--------|--------------------|
-| 1 | Config, AccountView, TradeManager, Logger | เปิด/ปิดไม้ผ่าน EA + ML%/DD คำนวณถูก (เทียบมือ) |
-| 2 | TrendEngine + state FLAT/RIDE | backtest เปิดไม้ตามเทรนด์ + pyramid ทำงาน |
-| 3 | Cover Loss + EquityTP + RiskManager ครบ | ผ่าน unit tests §15.1 ทั้งหมด + รอบเทรดจบเองใน tester |
-| 4 | LOCKED/UNLOCK + layer + NewsFilter + StateStore | ทดสอบ restart กลางรอบผ่าน |
-| 5 | Panel + push alerts + CSV | ใช้งาน demo ได้จริง |
-| 6 | Optimization + walk-forward + set files ต่อ symbol | ค่าพร้อมใช้ XAUUSD / GBPUSD |
+| เฟส | ขอบเขต | สถานะ | Definition of Done |
+|-----|--------|-------|--------------------|
+| 1 | Config, AccountView, TradeManager, Logger | ✅ (Logger แบบ Print/heartbeat — CSV รอเฟส 5) | เปิด/ปิดไม้ผ่าน EA + ML%/DD คำนวณถูก (เทียบมือ) |
+| 2 | TrendEngine + state FLAT/RIDE | ✅ (fresh-bar check, new-bar gating, sideway mode) | backtest เปิดไม้ตามเทรนด์ + pyramid ทำงาน |
+| 3 | Cover Loss + EquityTP + RiskManager ครบ | ✅ (2 โมเดล, rule 1–9 ครบ, ML simulate) — ต้องรัน `Scripts/HedgeEqEA_Tests.mq5` ยืนยันใน MT5 | ผ่าน unit tests §15.1 ทั้งหมด + รอบเทรดจบเองใน tester |
+| 4 | LOCKED/UNLOCK + layer + StateStore + S/R break + counter-trend | ✅ (NewsFilter/rollover ยังเป็น TODO) | ทดสอบ restart กลางรอบผ่าน |
+| 5 | Panel + push alerts + CSV + NewsFilter | ⬜ | ใช้งาน demo ได้จริง |
+| 6 | Optimization + walk-forward + set files ต่อ symbol | ⬜ | ค่าพร้อมใช้ XAUUSD / GBPUSD |
+
+> หมายเหตุ: โค้ดยังไม่ได้ผ่านการ compile บน MetaEditor (สภาพแวดล้อมนี้ไม่มี MT5) — ขั้นแรกของผู้ใช้: เปิดใน MetaEditor กด F7 แล้วรัน `Scripts/HedgeEqEA_Tests.mq5` ต้องได้ ALL PASSED
 
 โครง skeleton code ตามสถาปัตยกรรมนี้อยู่ที่ `MQL5/Experts/HedgeEquationEA/` ใน repo แล้ว (คลาสหลัก + สูตร §2 implement จริง, ส่วน logic เต็มมี `// TODO(phase-N)` กำกับตาม roadmap)
 
 ---
 
-## 18. คำถามเปิดถึงผู้ใช้
+## 18. การตัดสินใจปิดคำถามเปิด (ผู้ใช้มอบหมาย: "ตัดสินใจเองได้เลย ตามสมการ")
 
-1. ~~ไฟล์ role และ prompt~~ — ✅ ได้รับแล้ว (`Role__Objective.txt`) วิเคราะห์และปรับ design ครบใน §0
-2. โหมดเริ่มต้นควรเป็น **อัตโนมัติเต็มรูปแบบ** หรือ **กึ่งออโต้** (ผู้ใช้เปิดไม้เอง EA คำนวณ lot แก้ไม้ + Equity TP ให้ — แบบ "โรบอทกึ่งออโต้" ที่หนังสือแจก)? prompt ระบุ "fully functional automated" → ออกแบบเป็นอัตโนมัติเต็ม กึ่งออโต้เพิ่มได้เป็นโหมดที่สาม
-3. ทุนจริงที่จะใช้ต่อ 1 instance — prompt ยกตัวอย่าง 1000 USD, leverage 2000 (ตั้งเป็น default แล้ว) ยืนยัน/แก้ได้
-4. ต้องการ kill-switch จริง (`InpHardCutPct`) เปิดใช้เป็น default หรือยึดตาม prompt/หนังสือ (Zero Hedge ล็อคอย่างเดียว ไม่ตัดขาดทุน — ปัจจุบัน default ปิด)?
-5. `InpAllowCounterTrend` (prompt §4C) default ปิดไว้เพื่อความปลอดภัย — ต้องการเปิดเป็น default หรือไม่?
+| # | คำถาม | คำตัดสิน | เหตุผลตามสมการ |
+|---|-------|----------|-----------------|
+| 1 | ไฟล์ role/prompt | ✅ ได้รับแล้ว (`Role__Objective.txt`) — traceability ครบใน §0 | — |
+| 2 | อัตโนมัติเต็ม vs กึ่งออโต้ | **อัตโนมัติเต็มรูปแบบ** | prompt ระบุ "fully functional automated"; กึ่งออโต้เพิ่มภายหลังได้เป็นโหมดที่สาม |
+| 3 | ทุน/leverage default | **1,000 USD / 1:2000** | ตัวเลขตัวอย่างใน prompt §1; leverage สูง = margin ต่อ lot ต่ำ = ML% สูง (สมการหลัก) |
+| 4 | Hard kill-switch | **ปิด (`InpHardCutPct = 0`)** | หัวใจของสมการเฮดจ์คือ "แก้ Loss ไม่ตัด Loss" — ทางออกวิกฤตคือ Zero Hedge ล็อคพอร์ต (prompt §5 ระบุเป็น Stop Loss Alternative); ผู้ใช้ที่ต้องการยังเปิดได้ผ่าน input |
+| 5 | Counter-trend default | **ปิด (`InpAllowCounterTrend = false`)** | สามเหลี่ยมความปลอดภัยให้น้ำหนักการรักษา ML% สูงเป็นอันดับแรก การสวนเทรนด์เป็นเทคนิคเสริม (เทคนิค 5) ที่หนังสือกำกับว่ามีความเสี่ยง — โค้ด implement ครบแล้ว เปิดใช้เมื่อ backtest ยืนยัน |

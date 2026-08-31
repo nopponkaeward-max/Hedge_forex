@@ -7,6 +7,14 @@
 #include <Trade/Trade.mqh>
 #include "Config.mqh"
 
+// pure function แยกไว้ให้ unit test ได้ (Scripts/HedgeEqEA_Tests.mq5)
+double NormalizeLotUpPure(double lot, double step, double vmin, double vmax)
+  {
+   if(step <= 0.0) step = 0.01;
+   double n = MathCeil(lot / step - 1e-9) * step;
+   return MathMin(MathMax(n, vmin), vmax);
+  }
+
 class CTradeManager
   {
 private:
@@ -46,12 +54,42 @@ public:
    // ปัด lot "ขึ้น" ตาม step (สูตร cover ต้องไม่ขาด — ตามหนังสือ 0.05525→0.06) แล้ว clamp
    double            NormalizeLotUp(double lot) const
      {
-      double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-      double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-      double vmax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-      if(step <= 0.0) step = 0.01;
-      double n = MathCeil(lot / step - 1e-9) * step;
-      return MathMin(MathMax(n, vmin), vmax);
+      return NormalizeLotUpPure(lot,
+                                SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP),
+                                SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN),
+                                SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
+     }
+
+   // ปิดทุกไม้ของฝั่งเดียว (เทคนิค 1: ปิดฝั่งกำไรสวนเทรนด์ใหม่)
+   bool              CloseSide(ENUM_POSITION_TYPE side)
+     {
+      bool allOk = true;
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+         ulong tk = PositionGetTicket(i);
+         if(tk == 0 || !IsOurs()) continue;
+         if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != side) continue;
+         if(!ClosePosition(tk)) allOk = false;
+        }
+      return allOk;
+     }
+
+   // ปิด "หนึ่งไม้" ของฝั่งที่กำหนดที่ขาดทุนน้อยที่สุด (ใช้ใน UNLOCK — เทคนิค 3/8)
+   // คืน false เมื่อไม่มีไม้ฝั่งนั้นเหลือ หรือปิดไม่สำเร็จ
+   bool              CloseOneLeastLosing(ENUM_POSITION_TYPE side)
+     {
+      ulong bestTicket = 0;
+      double bestProfit = -DBL_MAX;
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+        {
+         ulong tk = PositionGetTicket(i);
+         if(tk == 0 || !IsOurs()) continue;
+         if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != side) continue;
+         double p = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+         if(p > bestProfit) { bestProfit = p; bestTicket = tk; }
+        }
+      if(bestTicket == 0) return false;
+      return ClosePosition(bestTicket);
      }
 
    bool              OpenMarket(ENUM_ORDER_TYPE type, double lot, string tag, ulong &dealTicket)

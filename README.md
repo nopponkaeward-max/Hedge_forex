@@ -20,6 +20,11 @@ EA สำหรับ MetaTrader 5 ตามระบบ "สมการเฮ�
 
 ## สถานะโปรเจกต์
 
-- [x] เอกสารออกแบบละเอียด (สถาปัตยกรรม, สูตร, state machine, inputs, แผนทดสอบ)
-- [x] Skeleton code: Config / AccountView / TrendEngine / TradeManager / RiskManager / HedgeEngine / EquityTP
-- [ ] เฟส 1–6 ตาม roadmap ใน DESIGN.md §17 (NewsFilter, StateStore, Panel, Logger, unit tests, optimization)
+- [x] เอกสารออกแบบละเอียด + traceability กับไฟล์ Role & Prompt (DESIGN.md §0)
+- [x] Core logic ครบวงจร (เฟส 1–4): Trend MTF, Cover Loss 2 โมเดล, Risk guards 9 ข้อ,
+      Zero Hedge lock/unlock, S/R break, counter-trend, Equity TP, StateStore กู้สถานะข้าม restart
+- [x] Unit tests สูตรสมการ: `MQL5/Scripts/HedgeEqEA_Tests.mq5` (รันใน MT5 ต้องได้ ALL PASSED)
+- [ ] เฟส 5–6: Panel UI, NewsFilter/rollover, CSV log, push alerts, optimization + set files
+
+**ขั้นตอนแรกสำหรับผู้ใช้:** เปิดโปรเจกต์ใน MetaEditor → compile (F7) → รัน `HedgeEqEA_Tests`
+→ backtest บน XAUUSD/GBPUSD M5 โหมด real ticks ก่อนใช้ demo

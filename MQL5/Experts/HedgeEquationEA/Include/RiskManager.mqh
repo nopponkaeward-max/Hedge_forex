@@ -86,12 +86,12 @@ public:
       if(dd >= m_cfg.ddWarnPct && increasesRisk)
         { v.allowed = false; v.ruleHit = 5; v.reason = StringFormat("DD %.1f%% ≥ warn %.1f%%", dd, m_cfg.ddWarnPct); return v; }
 
-      // 6. NetLotMax — ลดขนาด lot ลงจนผ่าน
+      // 6. NetLotMax — ใช้เฉพาะออเดอร์ที่เพิ่ม |net| (ออเดอร์ลดความเสี่ยงผ่านเสมอ)
       double netMax = NetLotMax();
       double netAfter = MathAbs(net + signedLot);
-      if(netAfter > netMax)
+      if(increasesRisk && netAfter > netMax)
         {
-         double allowedLot = netMax - MathAbs(net) + ((increasesRisk) ? 0.0 : lot);
+         double allowedLot = netMax - MathAbs(net);
          double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
          if(allowedLot < vmin)
            { v.allowed = false; v.ruleHit = 6; v.reason = StringFormat("net %.2f จะเกิน NetLotMax %.2f", netAfter, netMax); return v; }
@@ -99,8 +99,25 @@ public:
          v.reason = StringFormat("ลด lot %.2f→%.2f ตาม NetLotMax", lot, allowedLot);
         }
 
-      // 7. simulate ML% หลังเปิด ≥ MLFloor
-      // TODO(phase-3): คำนวณ margin หลังเปิดด้วย OrderCalcMargin(net+signedLot) แล้วเทียบ mlFloorPct
+      // 7. simulate ML% หลังเปิด ≥ MLFloor (สมการ ML% = Equity/Margin×100 กับ margin ของ net ใหม่)
+      double signedAdj = (type == ORDER_TYPE_BUY) ? v.adjustedLot : -v.adjustedLot;
+      double netAfterSigned = net + signedAdj;
+      double volStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+      if(MathAbs(netAfterSigned) >= volStep / 2.0)
+        {
+         ENUM_ORDER_TYPE netType = (netAfterSigned > 0) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+         double netPrice = (netType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
+                                                       : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double marginAfter = 0.0;
+         if(OrderCalcMargin(netType, _Symbol, MathAbs(netAfterSigned), netPrice, marginAfter) &&
+            marginAfter > 0.0)
+           {
+            double mlAfter = m_view.EquityEA() / marginAfter * 100.0;
+            if(mlAfter < m_cfg.mlFloorPct)
+              { v.allowed = false; v.ruleHit = 7;
+                v.reason = StringFormat("ML%% หลังเปิดจะเหลือ %.0f < floor %.0f", mlAfter, m_cfg.mlFloorPct); return v; }
+           }
+        }
 
       // 8. free margin จริง
       double needMargin = 0.0;

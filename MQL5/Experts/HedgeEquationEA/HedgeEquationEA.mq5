@@ -17,6 +17,7 @@
 #include "Include/RiskManager.mqh"
 #include "Include/HedgeEngine.mqh"
 #include "Include/EquityTP.mqh"
+#include "Include/StateStore.mqh"
 
 //=== General =================================================
 input long   InpMagic            = 990001;   // Magic Number (ต่างกันทุก chart)
@@ -100,6 +101,18 @@ CTradeManager  g_tm;
 CRiskManager   g_risk;
 CHedgeEngine   g_engine;
 CEquityTP      g_etp;
+CStateStore    g_store;
+
+// บันทึกตัวแปรที่กู้จาก positions ไม่ได้ (DESIGN §13)
+void PersistState(void)
+  {
+   SPersistState st;
+   st.layer          = g_engine.Layer();
+   st.peakEquity     = g_view.PeakEquity();
+   st.closedPL       = g_view.ClosedPL();
+   st.initialCapital = g_view.InitialCapital();
+   g_store.Save(st);
+  }
 
 //+------------------------------------------------------------------+
 void FillConfig(void)
@@ -154,7 +167,18 @@ int OnInit(void)
    if(!g_engine.Init(g_cfg, g_view, g_trend, g_risk, g_tm)) return INIT_FAILED;
    if(!g_etp.Init(g_cfg, g_view))     return INIT_FAILED;
 
-   // TODO(phase-4): StateStore.Restore() — อ่าน layer/peak/closedPL จากไฟล์ state ก่อน
+   // กู้ตัวแปรจากไฟล์ state ก่อน แล้วจึง reconstruct จาก positions จริง (positions เป็นหลัก)
+   g_store.Init(g_cfg);
+   SPersistState st;
+   st.layer = 0; st.peakEquity = 0.0; st.closedPL = 0.0; st.initialCapital = 0.0;
+   if(g_store.Load(st))
+     {
+      g_view.SetClosedPL(st.closedPL);
+      if(st.peakEquity > 0.0) g_view.SetPeak(st.peakEquity);
+      g_engine.SetLayer(st.layer);
+      PrintFormat("[HedgeEqEA] state restored: layer=%d peak=%.2f closedPL=%.2f",
+                  st.layer, st.peakEquity, st.closedPL);
+     }
    g_engine.RestoreState();
 
    EventSetTimer(1);   // panel / news / heartbeat เท่านั้น — ห้ามทำงานเทรดใน OnTimer
@@ -166,6 +190,7 @@ void OnDeinit(const int reason)
   {
    EventKillTimer();
    g_trend.Deinit();
+   g_engine.Deinit();
    // ไม่ปิดออเดอร์ — รอบเทรดต้องอยู่ข้าม restart ได้ (DESIGN §13)
   }
 
@@ -181,6 +206,7 @@ void OnTick(void)
       return;
      }
    g_engine.OnTickUpdate();
+   if(g_engine.ConsumeDirty()) PersistState();   // state/layer เปลี่ยน → บันทึกทันที
   }
 
 //+------------------------------------------------------------------+
@@ -224,8 +250,8 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                 + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
                 + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
       g_view.AddClosedPL(pl);
+      PersistState();                  // sync ไฟล์ state ทุกครั้งที่มี deal ปิด
      }
-   // TODO(phase-4): sync state file ทุกครั้งที่มี deal
   }
 
 //+------------------------------------------------------------------+
