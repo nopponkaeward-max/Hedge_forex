@@ -7,6 +7,17 @@
 
 #include "Config.mqh"
 
+// ระดับความปลอดภัย ML% ตาม Role & Prompt §2
+// (ช่วง 1000–2000 ที่ prompt เว้นไว้ นิยามเป็น ELEVATED — DESIGN §2.1)
+enum ENUM_ML_SAFETY
+  {
+   ML_CRITICAL,    // < 1,000%
+   ML_ELEVATED,    // 1,000 – 2,000%
+   ML_MODERATE,    // 2,000 – 3,000%
+   ML_SAFE,        // 3,000 – 10,000%
+   ML_VERY_SAFE    // ≥ 10,000% (รวมกรณี net=0 → ML=∞)
+  };
+
 class CAccountView
   {
 private:
@@ -116,12 +127,32 @@ public:
       return EquityEA() / m * 100.0;
      }
 
+   ENUM_ML_SAFETY    MLSafetyState(void) const
+     {
+      double ml = MarginLevelEA();
+      if(ml >= 10000.0) return ML_VERY_SAFE;   // รวม DBL_MAX (net=0)
+      if(ml >= 3000.0)  return ML_SAFE;
+      if(ml >= 2000.0)  return ML_MODERATE;
+      if(ml >= 1000.0)  return ML_ELEVATED;
+      return ML_CRITICAL;
+     }
+
+   // สูตรหลักตาม Role & Prompt §2: DD% = |Floating P/L| / Balance × 100 (เฉพาะเมื่อติดลบ)
    double            DrawdownPct(void)
      {
       double eq = EquityEA();
-      if(eq > m_peakEquity) m_peakEquity = eq;
+      if(eq > m_peakEquity) m_peakEquity = eq;   // track peak ไว้สำหรับสถิติ
+      double fpl = FloatingPL();
+      double bal = BalanceEA();
+      if(fpl >= 0.0 || bal <= 0.0) return 0.0;
+      return MathAbs(fpl) / bal * 100.0;
+     }
+
+   // สูตรเสริม (สถิติรายงานเท่านั้น — ไม่ใช้เป็น trigger): peak-equity drawdown
+   double            PeakDrawdownPct(void) const
+     {
       if(m_peakEquity <= 0.0) return 0.0;
-      return (m_peakEquity - eq) / m_peakEquity * 100.0;
+      return (m_peakEquity - EquityEA()) / m_peakEquity * 100.0;
      }
 
    double            PeakEquity(void) const { return m_peakEquity; }

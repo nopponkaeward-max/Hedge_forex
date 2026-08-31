@@ -46,13 +46,26 @@ public:
       return budget / marginPerLot;
      }
 
-   SRiskVerdict      CheckOpen(ENUM_ORDER_TYPE type, double lot, bool isZeroHedgeEntry)
+   SRiskVerdict      CheckOpen(ENUM_ORDER_TYPE type, double lot, bool isZeroHedgeEntry,
+                               bool isCounterTrend = false)
      {
       SRiskVerdict v;
       v.allowed = true; v.adjustedLot = lot; v.ruleHit = 0; v.reason = "";
 
       // ข้อยกเว้นสำคัญ: การเข้า Zero Hedge (LOCKED) ต้องทำได้ทุกสถานการณ์ (DESIGN §7)
       if(isZeroHedgeEntry) return v;
+
+      // 9. กติกาเหล็กของ prompt §4C: Σlot สวนเทรนด์ (รวมไม้ใหม่) ≤ Σlot ฝั่งตามเทรนด์
+      if(isCounterTrend)
+        {
+         double buy, sell;
+         m_view.SumLots(buy, sell);
+         double trendSide   = (type == ORDER_TYPE_BUY) ? sell : buy;  // ไม้สวน = ตรงข้ามฝั่งเทรนด์
+         double counterSide = (type == ORDER_TYPE_BUY) ? buy  : sell;
+         if(counterSide + lot > trendSide)
+           { v.allowed = false; v.ruleHit = 9;
+             v.reason = StringFormat("counter %.2f+%.2f > trend %.2f", counterSide, lot, trendSide); return v; }
+        }
 
       // 1. spread
       long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);

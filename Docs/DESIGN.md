@@ -4,10 +4,11 @@ EA อัตโนมัติบน MetaTrader 5 ที่ implement ระบ�
 **"เทคนิค Forex แก้พอร์ต Hedge ให้ได้กำไรด้วย สมการ Hedge" (สกี เกิดนิยม / โค้ชป้อม, Thai Forex Hedging, ISBN 978-616-588-579-9)**
 ตามไฟล์สรุปเนื้อหาที่ผู้ใช้แนบมา (`02137171-smarnhedgeebook.txt`)
 
-> **หมายเหตุแหล่งข้อมูล (ตรวจสอบ 2026-08-31):**
-> - Repo `nopponkaeward-max/Hedge_forex` ก่อนหน้านี้ว่างเปล่า — **ไม่พบไฟล์ role และ prompt** ที่อ้างถึง หากมีไฟล์ดังกล่าวให้ push ขึ้น repo แล้ว design นี้จะถูกปรับตามได้
-> - พบ FOREX-TRADE JOURNAL ใน Notion ของผู้ใช้ (XAUUSD/GBPUSD: 5-min golden cross, Fib 0.5 retest, 15-min support, CHOCH) — ใช้เป็นบริบทเสริมเรื่อง symbol และ TF ที่ผู้ใช้เทรดจริง
-> - แกนกลยุทธ์ทั้งหมดในเอกสารนี้อ้างอิง **ไฟล์แนบ (หนังสือสมการเฮดจ์)** เป็นหลัก
+> **แหล่งข้อมูลอ้างอิง:**
+> - **ไฟล์ Role & Prompt** (`Role__Objective.txt`) — spec หลักของ EA: ระบบ "Hedge Equation Trading System" 7 หมวด + deliverables (ดู §0)
+> - **ไฟล์สรุปหนังสือสมการเฮดจ์** — ที่มาของสูตรและหลักการ ใช้ตีความจุดที่ prompt ไม่ได้ระบุละเอียด
+> - FOREX-TRADE JOURNAL ใน Notion ของผู้ใช้ (XAUUSD/GBPUSD) — บริบทเสริมเรื่อง symbol/TF ที่เทรดจริง
+> - **Platform ที่เลือก: MQL5** (ตามคำขอเดิมของผู้ใช้ "EA MQL5" — prompt เปิดให้เลือก MQL4/MQL5/Python)
 
 > ⚠️ **คำเตือนความเสี่ยง:** ระบบ hedge ถือไม้ขาดทุนลอยตัว (ไม่ตัดขาดทุนทันที) มีความเสี่ยง drawdown สะสมสูง และอ่อนไหวต่อ spread ถ่าง/swap ข้ามคืนมาก (โดยเฉพาะ XAUUSD ช่วง rollover ตี 4–5 เวลาไทย ตามที่หนังสือระบุ) ต้อง backtest + demo forward test ก่อนใช้เงินจริงเสมอ
 
@@ -15,6 +16,7 @@ EA อัตโนมัติบน MetaTrader 5 ที่ implement ระบ�
 
 ## สารบัญ
 
+0. การวิเคราะห์ไฟล์ Role & Prompt → requirement ทีละข้อ
 1. หลักการของระบบจากหนังสือ → กติกาที่ EA ต้องทำ
 2. สมการ/สูตรคำนวณทั้งหมด (พร้อมที่มาในหนังสือ)
 3. สถาปัตยกรรมซอฟต์แวร์และโมดูล
@@ -33,6 +35,51 @@ EA อัตโนมัติบน MetaTrader 5 ที่ implement ระบ�
 16. Mapping เทคนิค 1–8 ของหนังสือ → ฟีเจอร์ EA
 17. Roadmap การพัฒนา
 18. คำถามเปิดถึงผู้ใช้
+
+---
+
+## 0. การวิเคราะห์ไฟล์ Role & Prompt → requirement ทีละข้อ
+
+ตาราง traceability: ทุกข้อใน prompt ↔ จุดที่ตอบใน design/โค้ด (✅ = ครอบคลุมแล้ว, 🔧 = ปรับตาม prompt ในรอบนี้)
+
+| หมวดใน prompt | Requirement | คำตอบใน design | สถานะ |
+|---------------|-------------|----------------|-------|
+| §1 Parameters | Initial_Capital | `InpAllocatedCapital` (+โหมด SCOPE) | ✅ |
+| §1 | Account_Leverage เป้าหมาย (เช่น 2000) เพื่อลด margin ต่อ lot | `InpTargetLeverage` — ตรวจใน OnInit เทียบ `ACCOUNT_LEVERAGE` จริง ต่ำกว่าเป้า → เตือนบน panel/log (EA เปลี่ยน leverage เองไม่ได้ เป็น setting ฝั่งโบรก) | 🔧 |
+| §1 | Target_TP_Points = 5000 | `InpCoverTPPts` | ✅ |
+| §1 | Target_Profit_Reference = 50 | `InpCoverProfitMoney` | ✅ |
+| §1 | Max_Hedge_Layers = 2 | `InpMaxLayers` + ตัวนับ §2.6 | ✅ |
+| §1 | Max_Drawdown_Limit = 30% | `InpDDLockPct` | ✅ |
+| §1 | MA 5/21/50 EMA Close | `InpMAFast/Mid/Slow`, `MODE_EMA`, `PRICE_CLOSE` | ✅ |
+| §2 Metrics | Equity = Balance + Floating P/L ทุก tick | `CAccountView.EquityEA()` | ✅ |
+| §2 | ML% = Equity/Margin×100 + กันหารศูนย์ | `MarginLevelEA()` คืน `DBL_MAX` เมื่อ margin=0 | ✅ |
+| §2 | แบ่งระดับความปลอดภัย: Critical <1000 / Moderate 2000–3000 / Safe 3000–10000 / Very Safe ≥10000 | `ENUM_ML_SAFETY` + `MLSafetyState()` (§2.1) — ช่วง 1000–2000 ที่ prompt เว้นไว้ นิยามเป็น "Elevated Risk" | 🔧 |
+| §2 | **DD% = (abs(Floating P/L)/Balance)×100** | แก้ `DrawdownPct()` เป็นสูตรนี้ (floating DD — เดิมผมใช้ peak-equity DD; คงไว้เป็นสถิติแยก `PeakDrawdownPct()`) นับเฉพาะเมื่อ Floating P/L < 0 | 🔧 |
+| §3 Trend | Day (H4 สำรอง) / 1H (30M) / 5M (1M) + align 1H กับ Day | default `InpMajorTF` เปลี่ยนเป็น **PERIOD_D1** (H4 เลือกได้), กติกา align = Major+Middle ทิศเดียวกัน (§5) | 🔧 |
+| §3 | SIDEWAY → จำกัด lot ขั้นต่ำ หรือหยุด | `InpSidewayMode` = PAUSE (default) / MIN_LOT | 🔧 |
+| §4A Entry | ไม้แรก lot ขั้นต่ำตามเทรนด์ | state FLAT→RIDE, `InpBaseLot` | ✅ |
+| §4B Cover | ตรวจ trend shift บน Medium/Small TF แล้วเปิดไม้แก้ฝั่งใหม่ | `FlipConfirmed()` + flow §6.1 | ✅ |
+| §4B | **Model 1 (Simple)**: `Lot = abs(Loss)/Target_TP_Points` | `InpCoverModel = COVER_SIMPLE` — หมายเหตุ: สูตรนี้ถูกหน่วยเฉพาะเมื่อมูลค่าจุด = 1 USD/จุด/lot (เช่นบัญชี USD บาง symbol) โค้ดจึงคูณ correction `PointValuePerLot` ให้เสมอ และ log ค่าที่ใช้ | 🔧 |
+| §4B | **Model 2 (Advanced)**: `(abs(Loss)+Profit_Reference)` cover ที่ระยะ TP | `InpCoverModel = COVER_TARGET` (default) — สูตร §2.3 ตรงตัวอย่าง 226.25+50→0.06 lot | ✅ |
+| §4B | Log ทุกการคำนวณ hedge lot | `CoverLossLot()` log input/ผลลัพธ์ทุกครั้ง | ✅ |
+| §4C | Counter-Trend Scalping: เทรนด์แข็ง + ชน S/R หรือ Bollinger Band สุดขอบ; **lot สวนรวม ≤ lot ฝั่งเทรนด์รวม** | ยกจาก v2 เข้า scope หลัก: §6.4 + `InpAllowCounterTrend` + guard ข้อ 9 ใน RiskManager | 🔧 |
+| §5 Zero Hedge | trigger: DD ≥ 30% **หรือ S/R หลัก break** | เพิ่ม S/R break trigger (swing level บน Middle TF, §9) ร่วมกับ ML%/DD/news เดิม | 🔧 |
+| §5 | Net_Lots = ΣBuy−ΣSell, เปิดไม้ตรงข้าม abs(Net) → margin 0, ML% ไม่แสดง, P/L ฟรีซ | `EnterLocked()` ตรงตาม spec | ✅ |
+| §5 | Deactivation เมื่อตลาดนิ่ง/breakout ชัด | `TryUnlock()` (§4 state UNLOCK) | ✅ |
+| §6 Equity TP | ปิดทุกไม้เมื่อ `Equity ≥ Balance` OR `Equity > Initial_Capital` | `CEquityTP` — default ปรับเป็นสูตร prompt ตรงตัว (`InpCycleProfitMoney` default 0); safeguard `Balance > ทุน` ก่อนใช้กติกาแรกคงไว้ (กันปิดรวบตอน Equity==Balance ที่ยังไม่มีกำไร ซึ่งเป็นจริงเสมอตอนพอร์ตว่าง) | 🔧 |
+| §7 MM | ML ≥ 3000% ช่วงปกติ | `InpMLTargetPct = 3000` → เพดาน net lot §2.2 | ✅ |
+| §7 | จำกัด layer 1–2 | `InpMaxLayers = 2` | ✅ |
+| §7 | ป้องกัน rollover / ข่าวแรง / spread ถ่าง | `InpRollover*`, NewsFilter, `InpMaxSpreadPts` | ✅ |
+| Deliverables | โค้ด production + comment ครบ | skeleton MQL5 + roadmap §17 | ✅ |
+| Deliverables | error handling + ตรวจ free margin ก่อนเปิด hedge | TradeManager retry + RiskManager ข้อ 8 | ✅ |
+| Deliverables | log Balance/Equity/ML%/Layers/State ทุก step | `CLogger.Snapshot()` เรียกทุก state transition + ทุกคำสั่งเทรด (§14) | ✅ |
+
+ข้อสังเกตจากการวิเคราะห์ (ตัดสินใจเชิงออกแบบที่ prompt เปิดไว้):
+
+1. **สูตร DD สองแบบให้คนละหน้าที่:** สูตรของ prompt (`|Floating|/Balance`) วัด "แผลปัจจุบัน" — ใช้เป็น trigger Zero Hedge ตาม spec; ส่วน peak-equity DD วัด "ความเสียหายสะสมของรอบ" — เก็บไว้เป็นสถิติรายงาน backtest เท่านั้น
+2. **Model 1 มีกับดักหน่วย:** `Loss/Points` ได้ "lot" จริงเฉพาะเมื่อ 1 จุด/1 lot = 1 หน่วยเงิน โค้ดจึง normalize ด้วย `PointValuePerLot` ทั้งสองโมเดล (Model 1 จึงเป็น Model 2 ที่ Profit_Reference = 0 โดยพฤตินัย) — ตรงเจตนา prompt และไม่พังบน XAUUSD/GBPUSD
+3. **ML% 1000–2000 ที่ prompt ไม่ได้นิยาม:** กำหนดเป็น "Elevated Risk" (สีส้ม) เพื่อให้ enum ต่อเนื่อง
+4. **Counter-trend ใช้ Bollinger Band (20,2) บน Entry TF + swing S/R บน Middle TF** เป็นเงื่อนไข "สุดขอบ" — ปิดเป็น default (`false`) เพราะเพิ่มความเสี่ยง ML% โดยผู้ใช้ควรเปิดเองหลัง backtest
 
 ---
 
@@ -69,6 +116,19 @@ ML% = (Equity / Margin) × 100
 - ใน MQL5: `AccountInfoDouble(ACCOUNT_MARGIN_LEVEL)` แต่ค่านี้เป็นของ **ทั้งบัญชี** — ถ้าผู้ใช้รัน EA หลายตัว/เทรดมือร่วมด้วย ต้องมีโหมดคำนวณ ML% "เสมือน" เฉพาะ positions ของ EA (Equity ส่วนของ EA = allocated capital + basket P/L, Margin ส่วนของ EA จาก `OrderCalcMargin` ของ net lot)
 - กรณี Fully Hedge (net lot = 0) โบรกส่วนใหญ่คิด margin = 0 → ML% ไม่แสดงค่า (หารด้วยศูนย์) — โค้ดต้องกันกรณีนี้ทุกจุด
 
+**ระดับความปลอดภัย (ตาม Role & Prompt §2):**
+
+```
+ML_VERY_SAFE   : ML% ≥ 10,000
+ML_SAFE        : 3,000 ≤ ML% < 10,000
+ML_MODERATE    : 2,000 ≤ ML% < 3,000
+ML_ELEVATED    : 1,000 ≤ ML% < 2,000     (prompt เว้นช่วงนี้ไว้ — นิยามเพิ่มให้ enum ต่อเนื่อง)
+ML_CRITICAL    : ML% < 1,000
+(net=0 → ML=∞ → ML_VERY_SAFE โดยนิยาม แต่ panel แสดง "—" ตามหนังสือ)
+```
+
+ใช้แสดงบน panel (สี เขียวเข้ม/เขียว/เหลือง/ส้ม/แดง), ใส่ในทุกบรรทัด log และเป็นเงื่อนไขประกอบของ guards
+
 ### 2.2 เพดาน net lot จาก ML% เป้าหมาย (กรณี D ในหนังสือ)
 
 ผู้ใช้กำหนด ML% ขั้นต่ำที่ยอมรับได้ (เช่น 3,000%) → EA คำนวณย้อนกลับ:
@@ -80,17 +140,23 @@ NetLotMax    = MarginBudget / MarginPerLot        // MarginPerLot จาก Orde
 
 ทุกครั้งที่จะเปิดออเดอร์ฝั่งที่ทำให้ |net lot| เพิ่มขึ้น ต้องผ่านเงื่อนไข `|net_lot_after| ≤ NetLotMax`
 
-### 2.3 สูตร Lot Size Hedge (Cover Loss — บทที่ 3)
+### 2.3 สูตร Lot Size Hedge (Cover Loss — บทที่ 3 + Role & Prompt §4B: สองโมเดล)
 
-เมื่อพอร์ตติดลบและเทรนด์ยืนยันกลับทิศ ให้เปิดไม้แก้ฝั่งใหม่ (ฝั่งเดียวกับเทรนด์ใหม่) ขนาด:
+เมื่อพอร์ตติดลบและเทรนด์ยืนยันกลับทิศ ให้เปิดไม้แก้ฝั่งใหม่ (ฝั่งเดียวกับเทรนด์ใหม่) — เลือกโมเดลผ่าน `InpCoverModel`:
 
 ```
-CoverAmount  = |FloatingLoss ของ basket| + ProfitTarget          // หน่วยเงิน
-LotHedge     = CoverAmount / (TP_points × PointValuePerLot)
 PointValuePerLot = SYMBOL_TRADE_TICK_VALUE × (_Point / SYMBOL_TRADE_TICK_SIZE)
+
+Model 1 — COVER_SIMPLE  (prompt: Lot = abs(Loss) / Target_TP_Points):
+   LotHedge = |FloatingLoss| / (TP_points × PointValuePerLot)
+
+Model 2 — COVER_TARGET  (default; ตรงตัวอย่างหนังสือ):
+   CoverAmount = |FloatingLoss| + ProfitTarget                 // หน่วยเงิน
+   LotHedge    = CoverAmount / (TP_points × PointValuePerLot)
 ```
 
-ตัวอย่างจากหนังสือ: Loss ลอยตัว −226.25, Profit อ้างอิง 50, ระยะ TP แก้ไม้ 5,000 จุด → `276.25 / 5000 = 0.05525 → ปัดขึ้น 0.06 lot` ✔ (ตัวอย่างนี้ point value = 1 USD/จุด/lot)
+- สูตรดิบของ Model 1 ใน prompt (`Loss/Points` ตรง ๆ) ถูกหน่วยเฉพาะเมื่อมูลค่าจุด = 1 หน่วยเงิน/จุด/lot — โค้ดจึง normalize ด้วย `PointValuePerLot` ทั้งสองโมเดล (Model 1 = Model 2 ที่ ProfitTarget = 0) และ **log ค่า input/ผลลัพธ์ทุกครั้งที่คำนวณ** ตามที่ prompt กำหนด
+- ตัวอย่างจากหนังสือ (Model 2): Loss −226.25, Profit อ้างอิง 50, TP 5,000 จุด → `276.25 / 5000 = 0.05525 → ปัดขึ้น 0.06 lot` ✔ (ตัวอย่างนี้ point value = 1 USD/จุด/lot)
 
 กติกาเพิ่มเติมของ EA:
 - ปัด lot **ขึ้น** ตาม `SYMBOL_VOLUME_STEP` (ตามหนังสือปัด 0.05525 → 0.06)
@@ -106,14 +172,18 @@ PointValuePerLot = SYMBOL_TRADE_TICK_VALUE × (_Point / SYMBOL_TRADE_TICK_SIZE)
 - `Equity_EA / Balance_EA` = ค่าที่คิดเฉพาะส่วนของ EA (ดู §2.1) — มีโหมด `WHOLE_ACCOUNT` สำหรับคนรัน EA ตัวเดียวทั้งพอร์ต ให้ใช้ค่าบัญชีตรง ๆ ตามหนังสือ
 - เช็คทุก tick ไม่ผูกกับ state ใด — เป็นทางปิดจบวงจรหลักของระบบ
 
-### 2.5 Drawdown Guard (บทที่ 4)
+### 2.5 Drawdown Guard (บทที่ 4 + Role & Prompt §2)
 
 ```
-DD% = (PeakEquity_EA − Equity_EA) / PeakEquity_EA × 100
-เกณฑ์หนังสือ: ควบคุมให้ < 30%
+สูตรหลัก (ตาม prompt — Floating Drawdown):
+   DD% = |Floating_P_L| / Balance × 100     เมื่อ Floating_P_L < 0 (มิฉะนั้น DD = 0)
+เกณฑ์: ควบคุมให้ < 30% (Max_Drawdown_Limit)
+
+สูตรเสริม (สถิติรายงานเท่านั้น — ไม่ใช้เป็น trigger):
+   PeakDD% = (PeakEquity_EA − Equity_EA) / PeakEquity_EA × 100
 ```
 
-EA แบ่งเป็น 2 เส้น: `InpDDWarnPct` (default 20 — เตือน + หยุดเปิดไม้เพิ่มความเสี่ยง) และ `InpDDLockPct` (default 30 — บังคับ Zero Hedge ล็อคพอร์ตทันที)
+EA แบ่งเป็น 2 เส้น: `InpDDWarnPct` (default 20 — เตือน + หยุดเปิดไม้เพิ่มความเสี่ยง) และ `InpDDLockPct` (default 30 = Max_Drawdown_Limit — บังคับ Zero Hedge ล็อคพอร์ตทันที)
 หมายเหตุ: หนังสือ **ไม่ใช้ Stop Loss ตัดขาดทุนรวม** — ทางออกยามวิกฤตของหนังสือคือ Zero Hedge + รอ/เติมทุน ดังนั้น default ของ EA คือ "ล็อค ไม่ใช่ล้าง" แต่มี input เสริม `InpHardCutPct` (0 = ปิดใช้) สำหรับผู้ใช้ที่ต้องการ kill-switch จริง ๆ
 
 ### 2.6 การนับ Layer Hedge (บทที่ 2 ข้อสังเกต + บทที่ 4)
@@ -179,11 +249,11 @@ CLOSE_ALL ──(ปิดครบ ยืนยันจาก OnTradeTransacti
 
 ### 5.1 Multiple Time Frame
 
-| บทบาท | TF (default) | ใช้ทำอะไร |
+| บทบาท | TF (default ตาม prompt §3) | ใช้ทำอะไร |
 |--------|--------------|-----------|
-| Major | D1 หรือ H4 (`InpMajorTF`) | ทิศทางหลักของวัน — ฝั่งที่อนุญาตให้ net lot หนัก |
-| Middle | H1 หรือ M30 (`InpMidTF`) | ยืนยันการเปลี่ยนเทรนด์ (เงื่อนไขบังคับก่อนเข้า COVER) |
-| Minor | M5 หรือ M1 (`InpEntryTF`) | จุดเข้าไม้/จุดเริ่มกลับตัว |
+| Major | **D1** (H4 เป็นทางเลือก) — `InpMajorTF` | ทิศทางหลัก (Macro) — ฝั่งที่อนุญาตให้ net lot หนัก |
+| Middle | **H1** (M30 ทางเลือก) — `InpMidTF` | ยืนยันการเปลี่ยนเทรนด์ (เงื่อนไขบังคับก่อนเข้า COVER); prompt: ต้อง align กับ Major |
+| Minor | **M5** (M1 ทางเลือก) — `InpEntryTF` | จุดเข้าไม้/จุดเริ่มกลับตัว |
 
 ### 5.2 MA 3 เส้น (5 / 21 / 50 ตามหนังสือ)
 
@@ -196,7 +266,9 @@ SIDEWAY   : นอกเหนือจากนั้น
 - คำนวณบนแท่ง **ปิดแล้ว** (shift 1) กัน repaint; ชนิด MA และ applied price เป็น input
 - **สัญญาณเข้า (FLAT→RIDE):** Major กับ Middle ต้องทิศเดียวกัน และ Minor เกิดการจัดเรียง MA ทิศนั้นภายใน `InpSignalFreshBars` แท่ง
 - **สัญญาณกลับทิศ (RIDE→COVER):** Middle เปลี่ยนทิศเป็นตรงข้ามกับ net lot ปัจจุบันติดต่อกัน `InpFlipConfirmBars` แท่ง (default 2) **และ** Major ไม่ค้านทิศใหม่ (อนุญาตเมื่อ Major = ทิศใหม่ หรือ SIDEWAY)
-- **SIDEWAY ทุก TF:** ไม่เปิดรอบใหม่ (หนังสือเตือนว่า sideway คือตัวการสะสม lot/layer)
+- **SIDEWAY:** prompt §3 ให้เลือก "จำกัด lot ขั้นต่ำ หรือหยุดเทรด" → `InpSidewayMode`:
+  - `SIDEWAY_PAUSE` (default) — ไม่เปิดรอบใหม่ (หนังสือเตือนว่า sideway คือตัวการสะสม lot/layer)
+  - `SIDEWAY_MIN_LOT` — เปิดได้เฉพาะ `VOLUME_MIN` ของ symbol และปิด pyramid
 
 ---
 
@@ -221,7 +293,24 @@ SIDEWAY   : นอกเหนือจากนั้น
 - เปิดเมื่อราคาวิ่งตามทิศครบ `InpPyramidStepPts` จากไม้ล่าสุด, lot = `InpBaseLot` (คงที่ ไม่ทวีคูณ — หนังสือย้ำไม่ใช่ martingale)
 - ทุกไม้ต้องผ่าน NetLotMax และ ML% guard
 
-### 6.3 ตัวนับ Layer
+### 6.3 Counter-Trend Scalping (Role & Prompt §4C)
+
+เปิดใช้ผ่าน `InpAllowCounterTrend` (default `false` — ควรเปิดหลัง backtest ยืนยัน):
+
+```
+เงื่อนไขเข้า (ต้องครบทุกข้อ):
+1. state = RIDE และเทรนด์ Major "แข็ง" (Major กับ Middle ทิศเดียวกันต่อเนื่อง ≥ InpStrongTrendBars แท่ง)
+2. ราคาแตะสุดขอบ: Bollinger Band(20, 2.0) บน Entry TF ฝั่งตรงข้ามเทรนด์
+   หรือแตะ swing S/R ล่าสุดบน Middle TF (fractal depth = InpSwingDepth)
+3. กติกาเหล็กของ prompt: Σlot ฝั่งสวนเทรนด์ (รวมไม้ใหม่) ≤ Σlot ฝั่งตามเทรนด์
+   → บังคับใน RiskManager (ข้อ 9) — การสวนจึงมีผล "เพิ่ม" ML% เสมอ ไม่มีทางทำ net สลับฝั่ง
+4. ผ่านการ์ดข้ออื่นทั้งหมดตามปกติ
+
+การออก: ปิดไม้สวนเมื่อกำไรถึง InpCounterTPPts หรือเมื่อราคากลับเข้า mid ของ BB
+        หรือถูกกลืนเป็นส่วนหนึ่งของ basket ตอน Equity TP / Zero Hedge
+```
+
+### 6.4 ตัวนับ Layer
 
 ```
 เหตุการณ์                                 layer
@@ -245,6 +334,8 @@ UNLOCK แล้วกลับเข้า LOCKED อีกครั้ง     
  6     |net_lot_after| ≤ NetLotMax (จาก ML_target §2.2)  ลดขนาด lot ลงจนผ่าน; ต่ำกว่า VOLUME_MIN → veto
  7     simulate: ML%_after ≥ InpMLFloorPct               ลดขนาด/veto
  8     margin จริงพอ (OrderCalcMargin ≤ FreeMargin×0.9)  veto
+ 9     (เฉพาะไม้สวนเทรนด์ §6.3) Σlot สวน + ไม้ใหม่        veto — กติกาเหล็ก prompt §4C
+       ≤ Σlot ฝั่งตามเทรนด์
 ```
 
 - ข้อ 3 มีข้อยกเว้นสำคัญ: **การทำ Zero Hedge (เข้า LOCKED) ต้องทำได้ทุกสถานการณ์** เพราะเป็นกลไกป้องกันพอร์ตของระบบ (เทคนิค 6 ใช้ตอนวิกฤต)
@@ -275,7 +366,7 @@ bool CEquityTP::ShouldCloseAll()
 
 ## 9. Zero Hedge Margin (โหมดล็อคพอร์ต)
 
-- **เข้าเมื่อ:** ML% < `InpMLLockPct` | DD ≥ `InpDDLockPct` | ข่าวแรง (ถ้า `InpLockOnNews`) | ผู้ใช้กดปุ่ม `[LOCK]` บน panel
+- **เข้าเมื่อ (Role & Prompt §5 + หนังสือ):** DD ≥ `InpDDLockPct` (Max_Drawdown_Limit) | **S/R หลักบน Middle TF แตก** สวนทิศ net lot (`InpLockOnSRBreak`, ใช้ swing level เดียวกับ §6.3) | ML% < `InpMLLockPct` | ข่าวแรง (ถ้า `InpLockOnNews`) | ผู้ใช้กดปุ่ม `[LOCK]` บน panel
 - **วิธีทำ:** เปิด market order ฝั่งตรงข้าม net lot ขนาด `|ΣBuy − ΣSell|` หนึ่งคำสั่ง → net = 0
 - **ผลตามหนังสือ:** margin ≈ 0 (ต้องตรวจ `SYMBOL_MARGIN_HEDGED` ของโบรกตอน OnInit — ถ้าโบรกคิด margin hedge ≠ 0 ให้แจ้งเตือนบน panel ว่าการล็อคไม่ฟรี), floating P/L ถูกฟรีซ
 - **คำเตือนที่ EA ต้องแสดง (จากหนังสือ):** Zero Hedge **ไม่กัน Stop Out เด็ดขาด** — MT5 จะ stop out เมื่อ Equity ≤ 0 และ spread ถ่างทำ Equity ไหลลงได้แม้ net=0 → ระหว่าง LOCKED ให้ EA เฝ้า Equity แล้วเตือน push notification เมื่อ Equity ลดผ่านเกณฑ์
@@ -290,10 +381,11 @@ bool CEquityTP::ShouldCloseAll()
 input long   InpMagic            = 990001;   // Magic Number (ต่างกันทุก chart)
 input string InpTradeComment     = "HedgeEqEA";
 input ENUM_ACCOUNT_SCOPE InpScope = SCOPE_VIRTUAL; // VIRTUAL=คิดเฉพาะส่วน EA / WHOLE=ทั้งบัญชีตามหนังสือ
-input double InpAllocatedCapital = 1000.0;   // ทุนที่จัดสรรให้ EA (โหมด VIRTUAL)
+input double InpAllocatedCapital = 1000.0;   // Initial_Capital — ทุนที่จัดสรรให้ EA
+input int    InpTargetLeverage   = 2000;     // Account_Leverage เป้าหมาย — ต่ำกว่านี้จริงจะเตือน (EA แก้เองไม่ได้)
 
-//=== Trend Engine (บทที่ 8) =================================
-input ENUM_TIMEFRAMES InpMajorTF = PERIOD_H4;
+//=== Trend Engine (บทที่ 8 + prompt §3) =====================
+input ENUM_TIMEFRAMES InpMajorTF = PERIOD_D1;   // Macro (H4 เป็นทางเลือก)
 input ENUM_TIMEFRAMES InpMidTF   = PERIOD_H1;
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
 input int    InpMAFast           = 5;        // MA เส้นสั้น (หนังสือ: 5)
@@ -309,10 +401,22 @@ input bool   InpAllowPyramid     = true;
 input int    InpPyramidStepPts   = 300;      // ระยะเติมไม้ตามเทรนด์ (points)
 input int    InpMaxPositions     = 15;       // เพดานจำนวนไม้รวม
 
-//=== Cover Loss Hedge (บทที่ 3) =============================
-input int    InpCoverTPPts       = 5000;     // ระยะ TP แผนแก้ไม้ (ตัวอย่างหนังสือ: 5,000 จุด)
-input double InpCoverProfitMoney = 50.0;     // Profit อ้างอิงบวกเข้า CoverAmount (ตัวอย่างหนังสือ: 50)
+//=== Cover Loss Hedge (บทที่ 3 + prompt §4B) ================
+input ENUM_COVER_MODEL InpCoverModel = COVER_TARGET; // SIMPLE=Model1 |Loss|/TP  TARGET=Model2 (+Profit อ้างอิง)
+input int    InpCoverTPPts       = 5000;     // Target_TP_Points (ตัวอย่าง: 5,000 จุด)
+input double InpCoverProfitMoney = 50.0;     // Target_Profit_Reference (Model 2)
 input bool   InpIncludeCosts     = true;     // รวม swap+commission ใน CoverAmount
+
+//=== Counter-Trend Scalping (prompt §4C) ====================
+input bool   InpAllowCounterTrend = false;   // เปิดหลัง backtest ยืนยันเท่านั้น
+input int    InpStrongTrendBars  = 6;        // แท่งที่ Major+Middle ทิศเดียวกัน = เทรนด์แข็ง
+input int    InpBBPeriod         = 20;       // Bollinger Band บน Entry TF
+input double InpBBDev            = 2.0;
+input int    InpSwingDepth       = 12;       // ความลึก swing S/R บน Middle TF
+input int    InpCounterTPPts     = 300;      // เป้ากำไรไม้สวนเทรนด์
+
+//=== Sideway (prompt §3) ====================================
+input ENUM_SIDEWAY_MODE InpSidewayMode = SIDEWAY_PAUSE; // PAUSE=หยุด | MIN_LOT=lot ขั้นต่ำเท่านั้น
 
 //=== Risk (บทที่ 2, 4, 5) ===================================
 input double InpMLTargetPct      = 3000.0;   // ML% เป้าหมายขั้นต่ำ → เพดาน net lot (กรณี D: 3,000%)
@@ -324,9 +428,12 @@ input double InpHardCutPct       = 0.0;      // 0=ปิดใช้ | >0 = DD �
 input int    InpMaxLayers        = 2;        // เพดาน layer (หนังสือ: 1–2)
 input int    InpMaxSpreadPts     = 60;
 
-//=== Equity TP (บทที่ 8) ====================================
+//=== Equity TP (บทที่ 8 + prompt §6) ========================
 input bool   InpUseBalanceRule   = true;     // ปิดรวบเมื่อ Equity ≥ Balance (และ Balance > ทุน)
-input double InpCycleProfitMoney = 10.0;     // เป้ากำไรขั้นต่ำ/รอบ เหนือทุนแรกเริ่ม
+input double InpCycleProfitMoney = 0.0;      // เป้ากำไรขั้นต่ำเหนือทุน (0 = สูตร prompt ตรงตัว: Equity > Initial_Capital)
+
+//=== Zero Hedge Triggers เพิ่มเติม (prompt §5) ===============
+input bool   InpLockOnSRBreak    = true;     // S/R หลัก Middle TF แตกสวนทิศ net lot → ล็อค
 
 //=== Session / News / Rollover ==============================
 input bool   InpUseNewsFilter    = true;
@@ -495,7 +602,7 @@ public:
 | 2. เทรดฝั่งเดียวกับเทรนด์ | ✅ อัตโนมัติ — กติกาหลักของ RIDE |
 | 3. ทยอยปิดกำไรสั้น + ปิดไม้ลบน้อยสุด ลด lot | ✅ ใช้ในลำดับการปิดของ UNLOCK และ CLOSE_ALL |
 | 4. จับคู่ไม้บวก-ลบปิดหักล้าง | ✅ ผ่าน `PositionCloseBy` เมื่อโบรกรองรับ (ประหยัด spread) |
-| 5. เปิดสวนเทรนด์เก็บสั้น (lot ห้ามเกินฝั่งเทรนด์) | ⏸ เฟสหลัง (v2) — เพิ่มความซับซ้อน/ความเสี่ยงต่อ ML% โดยไม่จำเป็นในเวอร์ชันแรก |
+| 5. เปิดสวนเทรนด์เก็บสั้น (lot ห้ามเกินฝั่งเทรนด์) | ✅ §6.3 Counter-Trend Scalping (prompt §4C บังคับ) — default ปิด เปิดผ่าน `InpAllowCounterTrend` |
 | 6. Zero Hedge Margin ยามวิกฤต | ✅ state LOCKED (§9) |
 | 7. ทยอยปิดเพิ่ม ML% แล้วค่อยประเมินทิศใหม่ | ✅ กลไก UNLOCK + TickGuards |
 | 8. ล็อคกำไรเป็นขั้นบันไดด้วย Zero Hedge | ✅ option `InpLockOnNews` + ปุ่ม LOCK มือ; ขั้นบันไดอัตโนมัติเป็น v2 |
@@ -519,7 +626,8 @@ public:
 
 ## 18. คำถามเปิดถึงผู้ใช้
 
-1. **ไฟล์ role และ prompt** ที่กล่าวถึงยังไม่อยู่ใน repo (repo ว่างก่อน push นี้) — ถ้ามี spec เพิ่มเติมนอกเหนือหนังสือ กรุณา push/แนบ แล้วจะปรับ design ให้ตรง
-2. โหมดเริ่มต้นควรเป็น **อัตโนมัติเต็มรูปแบบ** หรือ **กึ่งออโต้** (ผู้ใช้เปิดไม้เอง EA คำนวณ lot แก้ไม้ + Equity TP ให้ — แบบ "โรบอทกึ่งออโต้" ที่หนังสือแจก)? ปัจจุบันออกแบบเป็นอัตโนมัติเต็ม โดยกึ่งออโต้เพิ่มได้เป็นโหมดที่สาม
-3. ทุนจริงที่จะใช้ต่อ 1 instance และ leverage ของบัญชี — มีผลต่อ default ของ `InpMLTargetPct`/`InpBaseLot`
-4. ต้องการ kill-switch จริง (`InpHardCutPct`) เปิดใช้เป็น default หรือยึดตามหนังสือ (ล็อคอย่างเดียว ไม่ตัดขาดทุน)?
+1. ~~ไฟล์ role และ prompt~~ — ✅ ได้รับแล้ว (`Role__Objective.txt`) วิเคราะห์และปรับ design ครบใน §0
+2. โหมดเริ่มต้นควรเป็น **อัตโนมัติเต็มรูปแบบ** หรือ **กึ่งออโต้** (ผู้ใช้เปิดไม้เอง EA คำนวณ lot แก้ไม้ + Equity TP ให้ — แบบ "โรบอทกึ่งออโต้" ที่หนังสือแจก)? prompt ระบุ "fully functional automated" → ออกแบบเป็นอัตโนมัติเต็ม กึ่งออโต้เพิ่มได้เป็นโหมดที่สาม
+3. ทุนจริงที่จะใช้ต่อ 1 instance — prompt ยกตัวอย่าง 1000 USD, leverage 2000 (ตั้งเป็น default แล้ว) ยืนยัน/แก้ได้
+4. ต้องการ kill-switch จริง (`InpHardCutPct`) เปิดใช้เป็น default หรือยึดตาม prompt/หนังสือ (Zero Hedge ล็อคอย่างเดียว ไม่ตัดขาดทุน — ปัจจุบัน default ปิด)?
+5. `InpAllowCounterTrend` (prompt §4C) default ปิดไว้เพื่อความปลอดภัย — ต้องการเปิดเป็น default หรือไม่?

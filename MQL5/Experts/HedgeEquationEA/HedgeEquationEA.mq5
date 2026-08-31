@@ -22,10 +22,11 @@
 input long   InpMagic            = 990001;   // Magic Number (ต่างกันทุก chart)
 input string InpTradeComment     = "HedgeEqEA";
 input ENUM_ACCOUNT_SCOPE InpScope = SCOPE_VIRTUAL; // VIRTUAL=เฉพาะส่วน EA / WHOLE=ทั้งบัญชีตามหนังสือ
-input double InpAllocatedCapital = 1000.0;   // ทุนที่จัดสรรให้ EA (โหมด VIRTUAL)
+input double InpAllocatedCapital = 1000.0;   // Initial_Capital (prompt §1)
+input int    InpTargetLeverage   = 2000;     // Account_Leverage เป้าหมาย (prompt §1) — เตือนถ้าจริงต่ำกว่า
 
-//=== Trend Engine (หนังสือบทที่ 8: MTF + MA 5/21/50) =========
-input ENUM_TIMEFRAMES InpMajorTF = PERIOD_H4;
+//=== Trend Engine (หนังสือบทที่ 8 + prompt §3) ==============
+input ENUM_TIMEFRAMES InpMajorTF = PERIOD_D1;   // Macro (H4 ทางเลือกตาม prompt)
 input ENUM_TIMEFRAMES InpMidTF   = PERIOD_H1;
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
 input int    InpMAFast           = 5;
@@ -41,10 +42,22 @@ input bool   InpAllowPyramid     = true;
 input int    InpPyramidStepPts   = 300;
 input int    InpMaxPositions     = 15;
 
-//=== Cover Loss Hedge (หนังสือบทที่ 3) ======================
-input int    InpCoverTPPts       = 5000;     // ระยะ TP แผนแก้ไม้ (ตัวอย่างหนังสือ 5,000 จุด)
-input double InpCoverProfitMoney = 50.0;     // Profit อ้างอิง (ตัวอย่างหนังสือ 50)
+//=== Cover Loss Hedge (หนังสือบทที่ 3 + prompt §4B) =========
+input ENUM_COVER_MODEL InpCoverModel = COVER_TARGET; // SIMPLE=Model1 | TARGET=Model2 (default)
+input int    InpCoverTPPts       = 5000;     // Target_TP_Points
+input double InpCoverProfitMoney = 50.0;     // Target_Profit_Reference (Model 2)
 input bool   InpIncludeCosts     = true;
+
+//=== Counter-Trend Scalping (prompt §4C) ====================
+input bool   InpAllowCounterTrend = false;   // เปิดหลัง backtest ยืนยันเท่านั้น
+input int    InpStrongTrendBars  = 6;
+input int    InpBBPeriod         = 20;
+input double InpBBDev            = 2.0;
+input int    InpSwingDepth       = 12;
+input int    InpCounterTPPts     = 300;
+
+//=== Sideway (prompt §3) ====================================
+input ENUM_SIDEWAY_MODE InpSidewayMode = SIDEWAY_PAUSE;
 
 //=== Risk (ML% / DD / Layer) ================================
 input double InpMLTargetPct      = 3000.0;   // ML% เป้าหมาย → เพดาน net lot (กรณี D)
@@ -56,9 +69,12 @@ input double InpHardCutPct       = 0.0;      // 0=ปิดใช้ (ตาม�
 input int    InpMaxLayers        = 2;        // เกณฑ์หนังสือ: 1–2 ชั้น
 input int    InpMaxSpreadPts     = 60;
 
-//=== Equity TP (หนังสือบทที่ 8) =============================
+//=== Equity TP (หนังสือบทที่ 8 + prompt §6) =================
 input bool   InpUseBalanceRule   = true;
-input double InpCycleProfitMoney = 10.0;
+input double InpCycleProfitMoney = 0.0;      // 0 = สูตร prompt ตรงตัว: Equity > Initial_Capital
+
+//=== Zero Hedge Triggers เพิ่มเติม (prompt §5) ===============
+input bool   InpLockOnSRBreak    = true;     // S/R หลัก Middle TF แตก → ล็อค
 
 //=== Session / News =========================================
 input bool   InpUseNewsFilter    = true;
@@ -90,6 +106,7 @@ void FillConfig(void)
   {
    g_cfg.magic = InpMagic;                     g_cfg.comment = InpTradeComment;
    g_cfg.scope = InpScope;                     g_cfg.allocatedCapital = InpAllocatedCapital;
+   g_cfg.targetLeverage = InpTargetLeverage;
    g_cfg.majorTF = InpMajorTF;                 g_cfg.midTF = InpMidTF;
    g_cfg.entryTF = InpEntryTF;
    g_cfg.maFast = InpMAFast;                   g_cfg.maMid = InpMAMid;
@@ -97,8 +114,14 @@ void FillConfig(void)
    g_cfg.flipConfirmBars = InpFlipConfirmBars; g_cfg.signalFreshBars = InpSignalFreshBars;
    g_cfg.baseLot = InpBaseLot;                 g_cfg.allowPyramid = InpAllowPyramid;
    g_cfg.pyramidStepPts = InpPyramidStepPts;   g_cfg.maxPositions = InpMaxPositions;
+   g_cfg.coverModel = InpCoverModel;
    g_cfg.coverTPPts = InpCoverTPPts;           g_cfg.coverProfitMoney = InpCoverProfitMoney;
    g_cfg.includeCosts = InpIncludeCosts;
+   g_cfg.allowCounterTrend = InpAllowCounterTrend;
+   g_cfg.strongTrendBars = InpStrongTrendBars; g_cfg.bbPeriod = InpBBPeriod;
+   g_cfg.bbDev = InpBBDev;                     g_cfg.swingDepth = InpSwingDepth;
+   g_cfg.counterTPPts = InpCounterTPPts;
+   g_cfg.sidewayMode = InpSidewayMode;         g_cfg.lockOnSRBreak = InpLockOnSRBreak;
    g_cfg.mlTargetPct = InpMLTargetPct;         g_cfg.mlFloorPct = InpMLFloorPct;
    g_cfg.mlLockPct = InpMLLockPct;
    g_cfg.ddWarnPct = InpDDWarnPct;             g_cfg.ddLockPct = InpDDLockPct;
@@ -161,9 +184,26 @@ void OnTick(void)
   }
 
 //+------------------------------------------------------------------+
+// Snapshot ตาม deliverables ของ prompt: Balance / Equity / ML% / Layers / State ทุก step
+void LogSnapshot(string context)
+  {
+   double ml = g_view.MarginLevelEA();
+   PrintFormat("[HedgeEqEA] %s | bal=%.2f eq=%.2f ML=%s (%s) DD=%.1f%% net=%.2f layer=%d state=%d",
+               context, g_view.BalanceEA(), g_view.EquityEA(),
+               (ml == DBL_MAX ? "—" : DoubleToString(ml, 0)),
+               EnumToString(g_view.MLSafetyState()),
+               g_view.DrawdownPct(), g_view.NetLot(), g_engine.Layer(), g_engine.State());
+  }
+
 void OnTimer(void)
   {
-   // TODO(phase-5): อัปเดต panel, ตรวจ news window, เขียน heartbeat
+   static datetime lastHeartbeat = 0;
+   if(TimeCurrent() - lastHeartbeat >= 60)     // heartbeat ทุก 1 นาที
+     {
+      lastHeartbeat = TimeCurrent();
+      if(g_view.OpenPositions() > 0) LogSnapshot("heartbeat");
+     }
+   // TODO(phase-5): อัปเดต panel, ตรวจ news window
   }
 
 //+------------------------------------------------------------------+

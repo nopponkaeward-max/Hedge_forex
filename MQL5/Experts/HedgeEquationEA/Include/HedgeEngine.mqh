@@ -54,17 +54,25 @@ public:
    ENUM_HE_STATE     State(void) const { return m_state; }
    int               Layer(void) const { return m_layer; }
 
-   //--- สูตร Lot Size Hedge (Cover Loss) ตามหนังสือบทที่ 3 — DESIGN §2.3
-   //    LotHedge = (|FloatingLoss| + ProfitTarget) / (TP_points × PointValuePerLot)
+   //--- สูตร Lot Size Hedge (Cover Loss) — DESIGN §2.3, Role & Prompt §4B (2 โมเดล)
+   //    Model 1 COVER_SIMPLE : |Loss| / (TP_points × PointValuePerLot)
+   //    Model 2 COVER_TARGET : (|Loss| + Profit_Reference) / (TP_points × PointValuePerLot)
    double            CoverLossLot(void) const
      {
       double floatingPL = m_view.FloatingPL();          // includeCosts: swap รวมแล้วใน FloatingPL
       if(floatingPL >= 0.0) return 0.0;                 // ไม่มี loss ต้อง cover
-      double coverAmount = MathAbs(floatingPL) + m_cfg.coverProfitMoney;
+      double coverAmount = MathAbs(floatingPL);
+      if(m_cfg.coverModel == COVER_TARGET)
+         coverAmount += m_cfg.coverProfitMoney;
       double pvpl = CAccountView::PointValuePerLot();
       if(pvpl <= 0.0 || m_cfg.coverTPPts <= 0) return 0.0;
       double raw = coverAmount / (m_cfg.coverTPPts * pvpl);
-      return m_tm.NormalizeLotUp(raw);                  // ปัดขึ้น: 0.05525 → 0.06 ตามหนังสือ
+      double lot = m_tm.NormalizeLotUp(raw);            // ปัดขึ้น: 0.05525 → 0.06 ตามหนังสือ
+      // prompt §4B: log ทุกการคำนวณ hedge lot
+      PrintFormat("[HedgeEqEA] CoverLossLot model=%s loss=%.2f cover=%.2f tpPts=%d pv/lot=%.5f raw=%.5f lot=%.2f",
+                  (m_cfg.coverModel == COVER_SIMPLE ? "SIMPLE" : "TARGET"),
+                  floatingPL, coverAmount, m_cfg.coverTPPts, pvpl, raw, lot);
+      return lot;
      }
 
    //--- จุดเรียกเดียวจาก OnTick — ขับ state machine ทั้งหมด (DESIGN §4)
@@ -138,7 +146,15 @@ public:
          return;
         }
 
-      // 2) เติมไม้ตามเทรนด์ (pyramid, เทคนิค 2) — lot คงที่ ไม่ใช่ martingale
+      // 2) Zero Hedge trigger เพิ่มเติมของ prompt §5: S/R หลักบน Middle TF แตกสวนทิศ net lot
+      // TODO(phase-3): if(m_cfg.lockOnSRBreak && SRBreakAgainst(m_rideDir)) EnterLocked("S/R break");
+
+      // 3) Counter-Trend Scalping (prompt §4C, DESIGN §6.3) — default ปิด
+      // TODO(phase-4): เทรนด์แข็ง (strongTrendBars) + ราคาแตะ BB(bbPeriod,bbDev) ขอบตรงข้าม
+      //                หรือ swing S/R (swingDepth) → เปิดไม้สวนโดย RiskManager บังคับ
+      //                Σlot สวน ≤ Σlot ตามเทรนด์ (กติกาเหล็ก) — ปิดที่ counterTPPts
+
+      // 4) เติมไม้ตามเทรนด์ (pyramid, เทคนิค 2) — lot คงที่ ไม่ใช่ martingale
       if(m_cfg.allowPyramid && m_view.OpenPositions() < m_cfg.maxPositions)
         {
          double price = (m_rideDir == TREND_UP) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)

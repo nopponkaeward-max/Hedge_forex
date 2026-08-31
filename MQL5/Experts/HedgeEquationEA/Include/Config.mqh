@@ -11,13 +11,28 @@ enum ENUM_ACCOUNT_SCOPE
    SCOPE_WHOLE      // ใช้ค่าทั้งบัญชีตรง ๆ ตามหนังสือ (EA ตัวเดียวทั้งพอร์ต)
   };
 
+// Role & Prompt §4B — สองโมเดลคำนวณ lot แก้ไม้
+enum ENUM_COVER_MODEL
+  {
+   COVER_SIMPLE,    // Model 1: |Loss| / TP_points (normalize ด้วย point value)
+   COVER_TARGET     // Model 2: (|Loss| + Profit_Reference) / TP_points (default)
+  };
+
+// Role & Prompt §3 — พฤติกรรมช่วง SIDEWAY
+enum ENUM_SIDEWAY_MODE
+  {
+   SIDEWAY_PAUSE,   // หยุดเปิดรอบใหม่ (default)
+   SIDEWAY_MIN_LOT  // เปิดได้เฉพาะ VOLUME_MIN และปิด pyramid
+  };
+
 struct SConfig
   {
    // General
    long              magic;
    string            comment;
    ENUM_ACCOUNT_SCOPE scope;
-   double            allocatedCapital;
+   double            allocatedCapital;   // Initial_Capital
+   int               targetLeverage;     // Account_Leverage เป้าหมาย (ตรวจเทียบจริง — EA แก้เองไม่ได้)
    // Trend
    ENUM_TIMEFRAMES   majorTF, midTF, entryTF;
    int               maFast, maMid, maSlow;
@@ -27,10 +42,22 @@ struct SConfig
    double            baseLot;
    bool              allowPyramid;
    int               pyramidStepPts, maxPositions;
-   // Cover Loss Hedge (สูตรหนังสือ บทที่ 3)
-   int               coverTPPts;
-   double            coverProfitMoney;
+   // Cover Loss Hedge (สูตรหนังสือ บทที่ 3 + prompt §4B)
+   ENUM_COVER_MODEL  coverModel;
+   int               coverTPPts;         // Target_TP_Points
+   double            coverProfitMoney;   // Target_Profit_Reference
    bool              includeCosts;
+   // Counter-Trend Scalping (prompt §4C)
+   bool              allowCounterTrend;
+   int               strongTrendBars;
+   int               bbPeriod;
+   double            bbDev;
+   int               swingDepth;
+   int               counterTPPts;
+   // Sideway (prompt §3)
+   ENUM_SIDEWAY_MODE sidewayMode;
+   // Zero Hedge trigger เพิ่มเติม (prompt §5)
+   bool              lockOnSRBreak;
    // Risk
    double            mlTargetPct, mlFloorPct, mlLockPct;
    double            ddWarnPct, ddLockPct, hardCutPct;
@@ -69,6 +96,11 @@ bool ConfigValidate(const SConfig &cfg, string &err)
      { err = StringFormat("CoverTPPts %d แคบกว่า stops level %d", cfg.coverTPPts, stopsLevel); return false; }
    if(cfg.scope == SCOPE_VIRTUAL && cfg.allocatedCapital <= 0.0)
      { err = "โหมด VIRTUAL ต้องระบุ AllocatedCapital > 0"; return false; }
+   // แจ้งเตือน (ไม่ fail): leverage จริงต่ำกว่าเป้า — margin ต่อ lot จะสูงกว่าที่ระบบคาด (prompt §1)
+   long realLev = AccountInfoInteger(ACCOUNT_LEVERAGE);
+   if(realLev < cfg.targetLeverage)
+      PrintFormat("[HedgeEqEA] คำเตือน: leverage จริง 1:%d ต่ำกว่าเป้า 1:%d — ML%% จะต่ำกว่าที่ตารางหนังสือคาด",
+                  (int)realLev, cfg.targetLeverage);
    // แจ้งเตือน (ไม่ fail): โบรกคิด margin ตอน fully hedge หรือไม่ (DESIGN §9)
    double hedgedMargin = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_HEDGED);
    if(hedgedMargin > 0.0)
