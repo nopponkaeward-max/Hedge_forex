@@ -25,6 +25,33 @@ enum ENUM_SIDEWAY_MODE
    SIDEWAY_MIN_LOT  // เปิดได้เฉพาะ VOLUME_MIN และปิด pyramid
   };
 
+//--- pure lot utilities (unit-testable — Scripts/HedgeEqEA_Tests.mq5)
+// ปัด "ขึ้น" ตาม step แล้ว clamp [vmin, vmax] — ใช้กับ lot แก้ไม้ (สูตร cover ต้องไม่ขาด)
+double NormalizeLotUpPure(double lot, double step, double vmin, double vmax)
+  {
+   if(step <= 0.0) step = 0.01;
+   double n = MathCeil(lot / step - 1e-9) * step;
+   return MathMin(MathMax(n, vmin), vmax);
+  }
+
+// ปัด "ลง" ตาม step + clamp เพดาน (ไม่ clamp ขั้นต่ำ — caller ตรวจ < vmin เอง)
+// ใช้กับ lot ที่ถูกการ์ดลดขนาด: ห้ามปัดขึ้นเพราะจะทะลุเพดานที่การ์ดตั้งไว้
+double NormalizeLotDownPure(double lot, double step, double vmax)
+  {
+   if(step <= 0.0) step = 0.01;
+   double n = MathFloor(lot / step + 1e-9) * step;
+   return MathMin(n, vmax);
+  }
+
+// เพดาน lot ที่เปิดได้โดย |net หลังเปิด| ≤ netMax — คิดทั้งกรณีข้ามศูนย์ (cover order)
+// ทิศเดียวกับ net: เหลือที่ netMax − |net| | ทิศตรงข้าม: ข้ามศูนย์ได้ถึง |net| + netMax
+double MaxLotWithinNetCap(double net, bool orderIsBuy, double netMax)
+  {
+   bool sameDir = (orderIsBuy ? net >= 0.0 : net <= 0.0);
+   if(sameDir) return netMax - MathAbs(net);
+   return MathAbs(net) + netMax;
+  }
+
 struct SConfig
   {
    // General

@@ -14,6 +14,8 @@ struct SPersistState
    double            peakEquity;
    double            closedPL;
    double            initialCapital;
+   double            cycleStartBalance;   // baseline ของ EquityTP รอบปัจจุบัน
+   int               hadCover;            // 1 = รอบนี้เข้า recovery mode แล้ว
   };
 
 class CStateStore
@@ -40,6 +42,8 @@ public:
       FileWriteString(h, StringFormat("peakEquity=%.2f\n", st.peakEquity));
       FileWriteString(h, StringFormat("closedPL=%.2f\n", st.closedPL));
       FileWriteString(h, StringFormat("initialCapital=%.2f\n", st.initialCapital));
+      FileWriteString(h, StringFormat("cycleStartBalance=%.2f\n", st.cycleStartBalance));
+      FileWriteString(h, StringFormat("hadCover=%d\n", st.hadCover));
       FileClose(h);
       return true;
      }
@@ -61,6 +65,8 @@ public:
          else if(key == "peakEquity")     st.peakEquity = val;
          else if(key == "closedPL")       st.closedPL = val;
          else if(key == "initialCapital") st.initialCapital = val;
+         else if(key == "cycleStartBalance") st.cycleStartBalance = val;
+         else if(key == "hadCover")       st.hadCover = (int)val;
         }
       FileClose(h);
       return true;

@@ -39,8 +39,14 @@ private:
    ENUM_TREND        m_rideDir;        // ทิศของ net lot ที่ควรเป็น (ฝั่งเทรนด์)
    int               m_layer;
    double            m_lastEntryPrice; // สำหรับ pyramid step
+   bool              m_pyramidOK;      // false เมื่อรอบเข้าแบบ SIDEWAY_MIN_LOT (ห้ามเติมไม้)
+   double            m_cycleStartBal;  // BalanceEA ณ ต้นรอบ — baseline ของ EquityTP
+   bool              m_hadCover;       // รอบนี้เคย cover/lock แล้ว (recovery mode)
    int               m_bbHandle;       // Bollinger Band บน Entry TF (counter-trend §6.3)
    bool              m_dirty;          // มีการเปลี่ยน state/layer → main บันทึก StateStore
+   // cache swing S/R — คำนวณใหม่เฉพาะเมื่อแท่ง Middle TF ใหม่ (ประหยัด CPU ใน real-tick test)
+   datetime          m_srBarTime;
+   double            m_srSwingLow, m_srSwingHigh;
 
    void              SetState(ENUM_HE_STATE s, string reason)
      {
@@ -69,7 +75,13 @@ public:
       m_rideDir = TREND_SIDEWAY;
       m_layer = 0;
       m_lastEntryPrice = 0.0;
+      m_pyramidOK = true;
+      m_cycleStartBal = 0.0;
+      m_hadCover = false;
       m_dirty = false;
+      m_srBarTime = 0;
+      m_srSwingLow = 0.0;
+      m_srSwingHigh = 0.0;
       m_bbHandle = INVALID_HANDLE;
       if(m_cfg.allowCounterTrend)
         {
@@ -88,6 +100,10 @@ public:
    int               Layer(void) const { return m_layer; }
    void              SetLayer(int l)   { m_layer = l; m_risk.SetLayer(l); }
    bool              ConsumeDirty(void) { bool d = m_dirty; m_dirty = false; return d; }
+   double            CycleStartBalance(void) const { return m_cycleStartBal; }
+   bool              InRecovery(void) const        { return m_hadCover; }
+   void              SetCycleInfo(double startBal, bool hadCover)   // ใช้ตอน restore
+     { m_cycleStartBal = startBal; m_hadCover = hadCover; }
 
    //--- สูตร Lot Size Hedge (Cover Loss) — DESIGN §2.3, Role & Prompt §4B (2 โมเดล)
    double            CoverLossLot(void) const
@@ -145,6 +161,9 @@ public:
          m_rideDir = dir;
          m_lastEntryPrice = (t == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                                                   : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         m_pyramidOK = !isSideway;               // โหมด sideway-min-lot: ห้ามเติมไม้ (Config §SIDEWAY_MIN_LOT)
+         m_cycleStartBal = m_view.BalanceEA();   // baseline ของ EquityTP รอบนี้
+         m_hadCover = false;
          m_view.ResetPeak();
          SetState(HE_RIDE, "entry " + EnumToString(dir) + (isSideway ? " (sideway-min-lot)" : ""));
         }
@@ -160,7 +179,13 @@ public:
            {
             // เทคนิค 1: ไม่มี loss — ปิดฝั่งกำไร (ฝั่งเทรนด์เดิม = สวนเทรนด์ใหม่)
             // เก็บเข้า Balance แล้วให้ net สลับฝั่งตามธรรมชาติ
-            m_tm.CloseSide(DirToPosition(m_rideDir));
+            if(!m_tm.CloseSide(DirToPosition(m_rideDir)))
+              {
+               // ปิดไม่ครบ — ห้าม flip ทิศทั้งที่ net ยังอยู่ฝั่งเดิม
+               // (สัญญาณ flip จะ re-fire แท่ง Middle ถัดไปเพราะตัวนับไม่ถูก reset)
+               Print("[HedgeEqEA] technique-1: CloseSide ไม่สำเร็จ — retry แท่งถัดไป");
+               return;
+              }
             m_rideDir = newDir;
             m_lastEntryPrice = 0.0;
             m_dirty = true;
@@ -184,10 +209,12 @@ public:
             m_rideDir = newDir;
             m_lastEntryPrice = (t == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                                                      : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            m_pyramidOK = true;
+            m_hadCover = true;         // เข้า recovery mode → EquityTP กติกา 2 ทำงาน
             SetState(HE_RIDE, "cover filled");
            }
          else
-            SetState(HE_RIDE, "cover fail — รอสัญญาณแท่งถัดไป");
+            SetState(HE_RIDE, "cover fail — สัญญาณ re-fire แท่ง Middle ถัดไป");
          return;
         }
 
@@ -198,7 +225,8 @@ public:
       if(m_cfg.allowCounterTrend) ManageCounterTrend();
 
       // 4) เติมไม้ตามเทรนด์ (pyramid, เทคนิค 2) — lot คงที่ ไม่ใช่ martingale
-      if(m_cfg.allowPyramid && m_lastEntryPrice > 0.0 &&
+      //    m_pyramidOK=false เมื่อรอบเข้าแบบ sideway-min-lot (ห้ามสะสม lot ใน sideway)
+      if(m_cfg.allowPyramid && m_pyramidOK && m_lastEntryPrice > 0.0 &&
          m_view.OpenPositions() < m_cfg.maxPositions)
         {
          double price = (m_rideDir == TREND_UP) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
@@ -218,19 +246,25 @@ public:
      }
 
    //--- S/R break สวนทิศ (prompt §5): net long + ราคาหลุด swing low ⇒ ล็อค (และกลับกัน)
+   //    swing level คำนวณใหม่เฉพาะแท่ง Middle TF ใหม่ (cache) — ต่อ tick เทียบค่า cache เท่านั้น
    bool              CheckSRBreak(void)
      {
+      datetime bt = iTime(_Symbol, m_cfg.midTF, 0);
+      if(bt != m_srBarTime)
+        {
+         m_srBarTime = bt;
+         m_srSwingLow  = LastSwingLow(m_cfg.midTF, m_cfg.swingDepth);
+         m_srSwingHigh = LastSwingHigh(m_cfg.midTF, m_cfg.swingDepth);
+        }
       if(m_rideDir == TREND_UP)
         {
-         double sl = LastSwingLow(m_cfg.midTF, m_cfg.swingDepth);
-         if(sl > 0.0 && SymbolInfoDouble(_Symbol, SYMBOL_BID) < sl)
-           { EnterLocked(StringFormat("S/R break: bid < swing low %.5f", sl)); return true; }
+         if(m_srSwingLow > 0.0 && SymbolInfoDouble(_Symbol, SYMBOL_BID) < m_srSwingLow)
+           { EnterLocked(StringFormat("S/R break: bid < swing low %.5f", m_srSwingLow)); return true; }
         }
       else if(m_rideDir == TREND_DOWN)
         {
-         double sh = LastSwingHigh(m_cfg.midTF, m_cfg.swingDepth);
-         if(sh > 0.0 && SymbolInfoDouble(_Symbol, SYMBOL_ASK) > sh)
-           { EnterLocked(StringFormat("S/R break: ask > swing high %.5f", sh)); return true; }
+         if(m_srSwingHigh > 0.0 && SymbolInfoDouble(_Symbol, SYMBOL_ASK) > m_srSwingHigh)
+           { EnterLocked(StringFormat("S/R break: ask > swing high %.5f", m_srSwingHigh)); return true; }
         }
       return false;
      }
@@ -240,6 +274,9 @@ public:
    void              ManageCounterTrend(void)
      {
       // จัดการไม้สวนที่เปิดอยู่: ปิดเมื่อกำไรถึง counterTPPts
+      // active counter = comment มี "counter" และ "อยู่ฝั่งสวนเทรนด์ปัจจุบัน" เท่านั้น —
+      // ไม้ counter เก่าที่กลายเป็นฝั่งเทรนด์หลัง flip ถือเป็นสมาชิก basket ปกติ
+      // (ข้อจำกัดที่รู้: โบรกบางเจ้าเขียน comment ทับ — DESIGN §12)
       ENUM_POSITION_TYPE counterSide = (m_rideDir == TREND_UP) ? POSITION_TYPE_SELL
                                                                : POSITION_TYPE_BUY;
       bool hasCounter = false;
@@ -249,6 +286,7 @@ public:
          if(tk == 0) continue;
          if(PositionGetInteger(POSITION_MAGIC) != m_cfg.magic ||
             PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+         if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != counterSide) continue;
          if(StringFind(PositionGetString(POSITION_COMMENT), "counter") < 0) continue;
          hasCounter = true;
          double entry = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -301,9 +339,10 @@ public:
    //--- UNLOCK (เทคนิค 8 + 3): ทยอยปิดไม้ฝั่งสวนเทรนด์ใหม่ที่ขาดทุนน้อยสุด ทีละไม้/tick
    void              TryUnlock(void)
      {
+      // ใช้ AlignedTrend (ไม่ต้อง "สด") — พอร์ตที่ล็อคระหว่างเทรนด์ยาวต้องคลายได้
+      // แม้การจัดเรียง MA เกิดมานานแล้ว (เงื่อนไข fresh ใช้เฉพาะการเข้ารอบใหม่)
       ENUM_TREND dir;
-      bool isSideway;
-      if(!m_trend.EntrySignal(dir, isSideway) || isSideway) return;   // ต้องการเทรนด์ชัดเท่านั้น
+      if(!m_trend.AlignedTrend(dir)) return;
       if(m_view.DrawdownPct() >= m_cfg.ddWarnPct) return;             // รอพอร์ตฟื้นก่อน
 
       double net = m_view.NetLot();
@@ -331,7 +370,7 @@ public:
    void              CloseAll(string reason)
      {
       SetState(HE_CLOSING, reason);
-      m_tm.CloseAllOrdered(true);      // ไม้กำไรมากก่อน (DESIGN §4)
+      m_tm.CloseAllProfitFirst();      // ไม้กำไรมากก่อน (DESIGN §4)
      }
 
    void              UpdateClosing(void)
@@ -346,7 +385,7 @@ public:
          SetState(HE_FLAT, "รอบจบ — reset");
         }
       else
-         m_tm.CloseAllOrdered(true);   // retry ไม้ที่ค้าง
+         m_tm.CloseAllProfitFirst();   // retry ไม้ที่ค้าง
      }
 
    //--- เรียกจากปุ่ม panel
@@ -357,6 +396,9 @@ public:
    void              RestoreState(void)
      {
       if(m_view.OpenPositions() == 0) { SetState(HE_FLAT, "restore: ว่าง"); return; }
+      // fallback เมื่อไม่มี state file: baseline = ทุนแรกเริ่ม, layer>0 ถือเป็น recovery
+      if(m_cycleStartBal <= 0.0) m_cycleStartBal = m_view.InitialCapital();
+      if(m_layer > 0) m_hadCover = true;
       double net = m_view.NetLot();
       double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
       if(MathAbs(net) < step / 2.0)

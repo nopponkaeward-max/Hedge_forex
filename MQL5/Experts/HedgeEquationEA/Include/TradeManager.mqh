@@ -5,15 +5,7 @@
 #define HEQ_TRADEMANAGER_MQH
 
 #include <Trade/Trade.mqh>
-#include "Config.mqh"
-
-// pure function แยกไว้ให้ unit test ได้ (Scripts/HedgeEqEA_Tests.mq5)
-double NormalizeLotUpPure(double lot, double step, double vmin, double vmax)
-  {
-   if(step <= 0.0) step = 0.01;
-   double n = MathCeil(lot / step - 1e-9) * step;
-   return MathMin(MathMax(n, vmin), vmax);
-  }
+#include "Config.mqh"   // รวม pure lot utilities (NormalizeLotUpPure ฯลฯ)
 
 class CTradeManager
   {
@@ -129,9 +121,9 @@ public:
       return false;
      }
 
-   // ปิดทั้ง basket — profitFirst=true: ไม้กำไรมากก่อน (ลำดับ CLOSE_ALL, DESIGN §4)
-   //                 profitFirst=false: ไม้ขาดทุนน้อยสุดก่อน (ลำดับ UNLOCK, เทคนิค 3)
-   bool              CloseAllOrdered(bool profitFirst)
+   // ปิดทั้ง basket จากไม้กำไรมาก → ขาดทุนมาก (ลำดับ CLOSE_ALL, DESIGN §4):
+   // Equity ไม่ร่วงระหว่างทยอยปิด และ margin ถูกคืนเร็ว
+   bool              CloseAllProfitFirst(void)
      {
       // เก็บ (ticket, profit) แล้ว sort ก่อนปิด
       ulong  tickets[];
@@ -147,13 +139,13 @@ public:
          profits[n] = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
          n++;
         }
-      // selection sort ตามทิศที่ต้องการ (n เล็ก — maxPositions)
+      // selection sort กำไรมาก → น้อย (n เล็ก — maxPositions)
       for(int a = 0; a < n - 1; a++)
         {
          int best = a;
          for(int b = a + 1; b < n; b++)
-            if(profitFirst ? (profits[b] > profits[best]) : (profits[b] > profits[best]))
-               best = b; // ทั้งสองโหมดเริ่มจากค่ามาก (กำไรมาก / ขาดทุนน้อย = ค่ามากกว่า)
+            if(profits[b] > profits[best])
+               best = b;
          if(best != a)
            {
             ulong  tt = tickets[a]; tickets[a] = tickets[best]; tickets[best] = tt;

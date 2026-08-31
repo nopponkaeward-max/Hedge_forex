@@ -163,11 +163,20 @@ Model 2 — COVER_TARGET  (default; ตรงตัวอย่างหนั�
 - ก่อนเปิด ตรวจ §2.2 — ถ้า LotHedge ทำให้ ML% หลุดเกณฑ์ → ลดเหลือเพดาน แล้วถ้ายังไม่พอ cover → เข้าโหมด Zero Hedge Margin แทน (ตามเทคนิค 6)
 - `ProfitTarget` และ `TP_points` เป็น input; ถ้าเปิด `InpIncludeCosts` ให้บวก swap+commission สะสมของ basket เข้า CoverAmount
 
-### 2.4 Equity Take Profit (บทที่ 8)
+### 2.4 Equity Take Profit (บทที่ 8) — baseline รายรอบ
 
 ```
-ปิดรวบทุกออเดอร์เมื่อ:  Equity_EA ≥ max( Balance_EA , InitialCapital_EA + InpCycleProfitMoney )
+base = Balance_EA ณ ตอนเปิดรอบ (cycleStartBalance)
+กติกา 1: Balance_EA > base และ Equity_EA ≥ Balance_EA            → ปิดรวบ
+กติกา 2: (รอบเป็น recovery หรือ InpCycleProfitMoney > 0) และ
+         Equity_EA ≥ base + InpCycleProfitMoney                  → ปิดรวบ
 ```
+
+เหตุที่ไม่ใช้ "ทุนแรกเริ่ม" ตลอดชีพตามตัวอักษรของ prompt: หลังรอบแรกที่กำไร Balance > ทุน
+ทำให้เงื่อนไข `Equity > ทุน` จริงทันทีที่เปิดรอบใหม่ → ปิดรวบทิ้งทุกรอบ ขาดทุน spread สะสม
+(และกลับกัน หลังขาดทุนสะสมจะไม่ปิดรอบเลย) สูตรของหนังสือเขียนในบริบท "แก้พอร์ตหนึ่งครั้ง"
+ซึ่งเทียบเท่าหนึ่งรอบ (cycle) ของ EA พอดี; กติกา 2 จำกัดไว้เฉพาะรอบ recovery เพื่อไม่ให้รอบ
+ขี่เทรนด์ปกติถูกปิดทันทีที่ floating บวกหนึ่งจุด — รอบปกติออกด้วยกลไกเทรนด์ (technique-1/cover)
 
 - `Equity_EA / Balance_EA` = ค่าที่คิดเฉพาะส่วนของ EA (ดู §2.1) — มีโหมด `WHOLE_ACCOUNT` สำหรับคนรัน EA ตัวเดียวทั้งพอร์ต ให้ใช้ค่าบัญชีตรง ๆ ตามหนังสือ
 - เช็คทุก tick ไม่ผูกกับ state ใด — เป็นทางปิดจบวงจรหลักของระบบ
@@ -347,19 +356,18 @@ UNLOCK แล้วกลับเข้า LOCKED อีกครั้ง     
 ## 8. Equity Take Profit Engine
 
 ```mql5
-bool CEquityTP::ShouldCloseAll()
+// signature จริง: HedgeEngine เป็นเจ้าของ baseline รายรอบและ flag recovery
+bool CEquityTP::ShouldCloseAll(double cycleStartBalance, bool inRecovery, string &reason)
   {
-   double eq  = m_view.EquityEA();       // §2.1 — virtual หรือ whole-account ตามโหมด
-   double bal = m_view.BalanceEA();
-   double cap = m_view.InitialCapital();
-   // สูตรหนังสือ: EQUITY >= BALANCE หรือ EQUITY > ทุนแรกเริ่ม (+ เป้ากำไรขั้นต่ำของผู้ใช้)
-   bool byBalance = m_cfg.useBalanceRule && eq >= bal              && bal > cap; // กันปิดรวบตอนยังไม่มีกำไรจริง
-   bool byCapital = eq >= cap + m_cfg.cycleProfitMoney;
-   return (m_view.OpenPositions() > 0 && (byBalance || byCapital));
+   double base = (cycleStartBalance > 0) ? cycleStartBalance : m_view.InitialCapital();
+   // กติกา 1 (หนังสือ: Equity ≥ Balance) — เมื่อรอบนี้เก็บกำไรเข้า Balance แล้ว (bal > base)
+   //   คือกรณีตัวอย่างหนังสือ: ทุน 100 → Balance 150 → ปิดที่ Equity 130
+   // กติกา 2 (หนังสือ: Equity > ทุน + เป้า) — เฉพาะรอบ recovery หรือผู้ใช้ตั้งเป้า > 0
+   ...
   }
 ```
 
-- เงื่อนไข `bal > cap` เพิ่มจากหนังสือเล็กน้อย: ตัวอย่างในหนังสือ (ทุน 100 → Balance 150 → Equity 130 ≥ 100 → ปิดรวบ ได้กำไร 30) ใช้ได้เพราะ Balance โตแล้วจากการเก็บกำไรระหว่างทาง — เงื่อนไขนี้กันกรณี Equity==Balance ตอนเพิ่งเปิดพอร์ตซึ่งไม่ใช่จุดปิด
+- รายละเอียด semantics และเหตุผล ดู §2.4; `cycleStartBalance`/`inRecovery` ถูก persist ใน StateStore ข้าม restart
 - หลังปิดรวบสำเร็จ: บันทึกสถิติรอบ (กำไร, จำนวนไม้, layer สูงสุด, DD สูงสุด, ระยะเวลา) ลง CSV → reset วงจร → FLAT
 
 ---

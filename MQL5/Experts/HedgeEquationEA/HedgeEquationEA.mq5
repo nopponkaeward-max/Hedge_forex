@@ -107,10 +107,12 @@ CStateStore    g_store;
 void PersistState(void)
   {
    SPersistState st;
-   st.layer          = g_engine.Layer();
-   st.peakEquity     = g_view.PeakEquity();
-   st.closedPL       = g_view.ClosedPL();
-   st.initialCapital = g_view.InitialCapital();
+   st.layer             = g_engine.Layer();
+   st.peakEquity        = g_view.PeakEquity();
+   st.closedPL          = g_view.ClosedPL();
+   st.initialCapital    = g_view.InitialCapital();
+   st.cycleStartBalance = g_engine.CycleStartBalance();
+   st.hadCover          = g_engine.InRecovery() ? 1 : 0;
    g_store.Save(st);
   }
 
@@ -171,13 +173,17 @@ int OnInit(void)
    g_store.Init(g_cfg);
    SPersistState st;
    st.layer = 0; st.peakEquity = 0.0; st.closedPL = 0.0; st.initialCapital = 0.0;
+   st.cycleStartBalance = 0.0; st.hadCover = 0;
    if(g_store.Load(st))
      {
+      g_view.SetInitialCapital(st.initialCapital);   // สำคัญใน SCOPE_WHOLE: balance ปัจจุบันเพี้ยนจากทุนจริง
       g_view.SetClosedPL(st.closedPL);
       if(st.peakEquity > 0.0) g_view.SetPeak(st.peakEquity);
       g_engine.SetLayer(st.layer);
-      PrintFormat("[HedgeEqEA] state restored: layer=%d peak=%.2f closedPL=%.2f",
-                  st.layer, st.peakEquity, st.closedPL);
+      g_engine.SetCycleInfo(st.cycleStartBalance, st.hadCover != 0);
+      PrintFormat("[HedgeEqEA] state restored: layer=%d peak=%.2f closedPL=%.2f cap=%.2f cycleBase=%.2f recovery=%d",
+                  st.layer, st.peakEquity, st.closedPL, st.initialCapital,
+                  st.cycleStartBalance, st.hadCover);
      }
    g_engine.RestoreState();
 
@@ -197,9 +203,9 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick(void)
   {
-   // Equity TP เช็คก่อนทุกอย่าง ทุก state (DESIGN §4 กรอบบน)
+   // Equity TP เช็คก่อนทุกอย่าง ทุก state (DESIGN §4 กรอบบน) — baseline รายรอบ
    string reason;
-   if(g_etp.ShouldCloseAll(reason))
+   if(g_etp.ShouldCloseAll(g_engine.CycleStartBalance(), g_engine.InRecovery(), reason))
      {
       Print("[HedgeEqEA] " + reason);
       g_engine.UserCloseAll();

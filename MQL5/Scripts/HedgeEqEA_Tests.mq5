@@ -2,7 +2,6 @@
 //| HedgeEqEA_Tests.mq5 — unit tests ของ pure functions (DESIGN §15.1)|
 //| ลากลง chart ใดก็ได้ → ดูผลใน Experts log (ต้องได้ ALL PASSED)     |
 //+------------------------------------------------------------------+
-#property script_show_inputs false
 #property strict
 
 #include "..\\Experts\\HedgeEquationEA\\Include\\HedgeEngine.mqh"
@@ -41,6 +40,24 @@ void OnStart(void)
    AssertEq("clamp min",      NormalizeLotUpPure(0.001,   0.01, 0.01, 100.0), 0.01);
    AssertEq("clamp max",      NormalizeLotUpPure(150.0,   0.01, 0.01, 100.0), 100.0);
    AssertEq("step 0.1",       NormalizeLotUpPure(0.05525, 0.10, 0.10, 100.0), 0.10);
+
+   // --- NormalizeLotDownPure: ปัดลงตาม step (ใช้กับ lot ที่การ์ดลดขนาด — ห้ามปัดขึ้นทะลุเพดาน)
+   AssertEq("down 0.0333→0.03", NormalizeLotDownPure(0.0333, 0.01, 100.0), 0.03);
+   AssertEq("down exact",       NormalizeLotDownPure(0.05,   0.01, 100.0), 0.05);
+   AssertEq("down below min→0", NormalizeLotDownPure(0.004,  0.01, 100.0), 0.0);
+   AssertEq("down clamp max",   NormalizeLotDownPure(150.0,  0.01, 100.0), 100.0);
+
+   // --- MaxLotWithinNetCap: เพดาน lot ตาม NetLotMax (RiskManager rule 6)
+   // ทิศเดียวกับ net: เหลือ netMax − |net|
+   AssertEq("cap same dir",     MaxLotWithinNetCap(0.30, true, 0.3333), 0.0333, 1e-6);
+   // cover ข้ามศูนย์ (net +0.01, ขาย): เปิดได้ถึง |net| + netMax = 0.04
+   AssertEq("cap cross zero",   MaxLotWithinNetCap(0.01, false, 0.03), 0.04);
+   // net ติดลบ + ขาย = ทิศเดียวกัน
+   AssertEq("cap short same",   MaxLotWithinNetCap(-0.02, false, 0.05), 0.03);
+   // net เกินเพดานอยู่แล้ว ทิศเดียวกัน → ติดลบ (caller veto)
+   AssertEq("cap over neg",     MaxLotWithinNetCap(0.10, true, 0.05), -0.05);
+   // net = 0: ทั้งสองทิศได้ netMax เต็ม
+   AssertEq("cap net zero",     MaxLotWithinNetCap(0.0, true, 0.05), 0.05);
 
    // --- chain: สูตรหนังสือครบวงจร = CoverLotMath → NormalizeLotUp = 0.06
    AssertEq("book chain 0.06",

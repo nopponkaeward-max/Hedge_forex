@@ -115,12 +115,23 @@ public:
          if(maj == opposite || maj == TREND_SIDEWAY)
            {
             newDir = opposite;
-            m_flipCount = 0;          // ใช้สัญญาณแล้ว reset กัน re-trigger ซ้ำ
-            m_flipDir = TREND_SIDEWAY;
+            // ไม่ reset ตัวนับที่นี่ — ถ้า cover เปิดไม่สำเร็จ สัญญาณต้อง re-fire แท่งถัดไป
+            // หลัง cover สำเร็จ rideDir สลับฝั่ง → การเรียกครั้งถัดไป opposite เปลี่ยน
+            // และ Middle ไม่ตรงกับ opposite ใหม่ ตัวนับจะ reset เองใน else-branch
             return true;
            }
         }
       return false;
+     }
+
+   // เทรนด์ align โดยไม่ต้อง "สด" (Major==Middle ทิศเดียวกัน) — ใช้ในเงื่อนไข UNLOCK:
+   // พอร์ตที่ล็อคระหว่างเทรนด์ยาวต้องคลายได้แม้การจัดเรียง MA เกิดมานานแล้ว
+   bool              AlignedTrend(ENUM_TREND &dir) const
+     {
+      ENUM_TREND maj = Major();
+      if(maj == TREND_SIDEWAY || maj != Middle()) return false;
+      dir = maj;
+      return true;
      }
 
    // เทรนด์แข็ง (counter-trend §6.3): Major ทิศ dir และ Middle align ทิศเดียวกัน

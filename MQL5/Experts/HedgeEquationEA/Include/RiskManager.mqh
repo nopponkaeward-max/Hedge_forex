@@ -87,15 +87,20 @@ public:
         { v.allowed = false; v.ruleHit = 5; v.reason = StringFormat("DD %.1f%% ≥ warn %.1f%%", dd, m_cfg.ddWarnPct); return v; }
 
       // 6. NetLotMax — ใช้เฉพาะออเดอร์ที่เพิ่ม |net| (ออเดอร์ลดความเสี่ยงผ่านเสมอ)
+      //    เพดานคิดถูกทั้งกรณีทิศเดียวกับ net และ cover order ที่ข้ามศูนย์ (|net|+netMax)
       double netMax = NetLotMax();
       double netAfter = MathAbs(net + signedLot);
       if(increasesRisk && netAfter > netMax)
         {
-         double allowedLot = netMax - MathAbs(net);
+         double cap = MaxLotWithinNetCap(net, type == ORDER_TYPE_BUY, netMax);
+         double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
          double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+         double vmax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+         // ปัด "ลง" ตาม step ก่อนส่ง — ค่าดิบเช่น 0.0333 จะโดนโบรก reject INVALID_VOLUME
+         double allowedLot = NormalizeLotDownPure(MathMin(lot, cap), step, vmax);
          if(allowedLot < vmin)
            { v.allowed = false; v.ruleHit = 6; v.reason = StringFormat("net %.2f จะเกิน NetLotMax %.2f", netAfter, netMax); return v; }
-         v.adjustedLot = allowedLot;   // caller ต้อง NormalizeLot "ลง" ในกรณีลดขนาด
+         v.adjustedLot = allowedLot;
          v.reason = StringFormat("ลด lot %.2f→%.2f ตาม NetLotMax", lot, allowedLot);
         }
 

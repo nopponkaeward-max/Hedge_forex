@@ -22,8 +22,9 @@ class CAccountView
   {
 private:
    SConfig           m_cfg;
-   double            m_closedPL;      // กำไร/ขาดทุนปิดแล้วสะสมของ EA (โหมด VIRTUAL, กู้จาก state file)
-   double            m_peakEquity;    // สำหรับ DD% — track สูงสุดตั้งแต่เริ่มรอบ
+   double            m_closedPL;        // กำไร/ขาดทุนปิดแล้วสะสมของ EA (โหมด VIRTUAL, กู้จาก state file)
+   double            m_peakEquity;      // สำหรับสถิติ peak DD
+   double            m_initialCapital;  // ทุนแรกเริ่ม — คงที่ (SCOPE_WHOLE จับจาก balance ครั้งแรก แล้วกู้จาก state file)
 
    // วนทุก position ของ EA (magic+symbol) — จุดกรองเดียวของทั้งระบบ
    bool              IsOurs(void) const
@@ -37,15 +38,16 @@ public:
      {
       m_cfg = cfg;
       m_closedPL = 0.0;
-      m_peakEquity = InitialCapital();
+      // SCOPE_WHOLE: จับ balance ตอนเริ่มเป็นทุนแรก — ถ้ามี state file ค่าจริงจะถูก
+      // SetInitialCapital ทับตอน restore (balance ปัจจุบันเพี้ยนได้จากกำไร/ขาดทุนสะสม)
+      m_initialCapital = (cfg.scope == SCOPE_VIRTUAL) ? cfg.allocatedCapital
+                                                      : AccountInfoDouble(ACCOUNT_BALANCE);
+      m_peakEquity = m_initialCapital;
       return true;
      }
 
-   double            InitialCapital(void) const
-     {
-      return (m_cfg.scope == SCOPE_VIRTUAL) ? m_cfg.allocatedCapital
-                                            : AccountInfoDouble(ACCOUNT_BALANCE); // TODO(phase-4): เก็บทุนแรกเริ่มจริงลง StateStore
-     }
+   double            InitialCapital(void) const { return m_initialCapital; }
+   void              SetInitialCapital(double v) { if(v > 0.0) m_initialCapital = v; }
 
    void              AddClosedPL(double v) { m_closedPL += v; }   // เรียกจาก OnTradeTransaction (deal out)
    void              SetClosedPL(double v) { m_closedPL = v; }    // ใช้ตอน restore
