@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#include "..\\Experts\\HedgeEquationEA\\Include\\HedgeEngine.mqh"
+#include <HedgeEquationEA/HedgeEngine.mqh>
 
 int g_pass = 0, g_fail = 0;
 

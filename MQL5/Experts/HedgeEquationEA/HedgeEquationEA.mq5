@@ -7,20 +7,20 @@
 //| เอกสารออกแบบ: Docs/DESIGN.md                                     |
 //+------------------------------------------------------------------+
 #property copyright "Hedge_forex project"
-#property version   "0.10"
+#property version   "1.00"
 #property strict
 
-#include "Include/Config.mqh"
-#include "Include/AccountView.mqh"
-#include "Include/TrendEngine.mqh"
-#include "Include/TradeManager.mqh"
-#include "Include/RiskManager.mqh"
-#include "Include/NewsFilter.mqh"
-#include "Include/Logger.mqh"
-#include "Include/HedgeEngine.mqh"
-#include "Include/EquityTP.mqh"
-#include "Include/StateStore.mqh"
-#include "Include/Panel.mqh"
+#include <HedgeEquationEA/Config.mqh>
+#include <HedgeEquationEA/AccountView.mqh>
+#include <HedgeEquationEA/TrendEngine.mqh>
+#include <HedgeEquationEA/TradeManager.mqh>
+#include <HedgeEquationEA/RiskManager.mqh>
+#include <HedgeEquationEA/NewsFilter.mqh>
+#include <HedgeEquationEA/Logger.mqh>
+#include <HedgeEquationEA/HedgeEngine.mqh>
+#include <HedgeEquationEA/EquityTP.mqh>
+#include <HedgeEquationEA/StateStore.mqh>
+#include <HedgeEquationEA/Panel.mqh>
 
 //=== General =================================================
 input long   InpMagic            = 990001;   // Magic Number (ต่างกันทุก chart)

@@ -2,11 +2,23 @@
 
 ทำตามลำดับ ห้ามข้ามขั้น — แต่ละขั้นมีเกณฑ์ "ผ่าน" ชัดเจน ไม่ผ่านให้หยุดแก้ก่อน
 
-## ขั้น 0: Compile + Unit tests (ทำครั้งแรกและทุกครั้งที่แก้โค้ด)
+## ขั้น 0: ติดตั้งไฟล์ + Compile + Unit tests (ทำครั้งแรกและทุกครั้งที่แก้โค้ด)
 
-1. เปิด MetaEditor → เปิด `MQL5/Experts/HedgeEquationEA/HedgeEquationEA.mq5` → **F7**
+**0.1 วางไฟล์ให้ถูกตำแหน่ง** — เปิด MT5 → File → Open Data Folder → เข้าโฟลเดอร์ `MQL5\` แล้ว copy จาก repo ตามนี้:
+
+| จาก repo | ไปที่ Data Folder | หมายเหตุ |
+|----------|-------------------|----------|
+| `MQL5/Include/HedgeEquationEA/` (ทั้งโฟลเดอร์ 12 ไฟล์ .mqh) | `MQL5\Include\HedgeEquationEA\` | **บังคับ** — include ทั้งหมดอ้างแบบ `<HedgeEquationEA/...>` จากที่นี่ |
+| `MQL5/Experts/HedgeEquationEA/HedgeEquationEA.mq5` | `MQL5\Experts\` (ที่ไหนก็ได้ใต้ Experts, เปลี่ยนชื่อไฟล์ได้) | ตัว EA |
+| `MQL5/Scripts/HedgeEqEA_Tests.mq5` | `MQL5\Scripts\` | unit tests |
+| `MQL5/Presets/*.set` | `MQL5\Presets\` | preset สำหรับ tester |
+
+> ถ้าเจอ `file '...Config.mqh' not found` แปลว่าโฟลเดอร์ `Include\HedgeEquationEA` ยังไม่อยู่ในตำแหน่งข้างบน
+
+**0.2 Compile:** MetaEditor → เปิดไฟล์ EA → **F7**
    - เกณฑ์ผ่าน: 0 errors (warnings อ่านทุกตัวแล้วตัดสินใจ)
-2. Compile `MQL5/Scripts/HedgeEqEA_Tests.mq5` แล้วลากลง chart ใดก็ได้
+
+**0.3 Unit tests:** Compile `HedgeEqEA_Tests.mq5` แล้วลากลง chart ใดก็ได้
    - เกณฑ์ผ่าน: Experts log แสดง **ALL PASSED** (22 assertions)
 
 ## ขั้น 1: Smoke test ใน Strategy Tester
