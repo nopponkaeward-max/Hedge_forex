@@ -4,7 +4,18 @@
 
 ## ขั้น 0: ติดตั้งไฟล์ + Compile + Unit tests (ทำครั้งแรกและทุกครั้งที่แก้โค้ด)
 
-**0.1 วางไฟล์ให้ถูกตำแหน่ง** — เปิด MT5 → File → Open Data Folder → เข้าโฟลเดอร์ `MQL5\` แล้ว copy จาก repo ตามนี้:
+**0.1 วางไฟล์ — วิธีง่าย (แนะนำ): ใช้ไฟล์ all-in-one ไฟล์เดียว**
+
+| จาก repo | ไปที่ Data Folder (`MT5 → File → Open Data Folder → MQL5\`) |
+|----------|--------------------------------------------------------------|
+| `MQL5/Experts/HedgeEquationEA_AllInOne.mq5` | `MQL5\Experts\` (วางที่ไหน/เปลี่ยนชื่อก็ได้) |
+| `MQL5/Scripts/HedgeEqEA_Tests_AllInOne.mq5` | `MQL5\Scripts\` |
+| `MQL5/Presets/*.set` | `MQL5\Presets\` |
+
+ไฟล์ all-in-one รวมโค้ดทุกโมดูลไว้แล้ว ไม่ต้อง copy โฟลเดอร์ Include ใด ๆ — compile ได้ทันที
+(สร้างจากไฟล์ต้นทางด้วย `python3 tools/build_single.py` — ถ้าแก้โค้ดต้นทาง ให้ build ใหม่)
+
+**0.1-ทางเลือก: แบบแยกโมดูล (สำหรับพัฒนาต่อ)** — copy จาก repo ตามนี้:
 
 | จาก repo | ไปที่ Data Folder | หมายเหตุ |
 |----------|-------------------|----------|
